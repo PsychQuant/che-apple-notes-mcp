@@ -1,0 +1,19 @@
+# Swift
+.build/
+.swiftpm/
+Package.resolved
+
+# IDE
+.vscode
+.DS_Store
+
+# Build artifacts (distributed via GitHub Release)
+mcpb/server/*
+!mcpb/server/.gitkeep
+
+# MCPB package (generated)
+mcpb/*.mcpb
+
+# Session / local state
+.remember/
+.claude/settings.local.json
