@@ -1,0 +1,53 @@
+{
+  "manifest_version": "0.3",
+  "name": "che-apple-notes-mcp",
+  "display_name": "macOS Apple Notes",
+  "version": "0.1.0",
+  "description": "SQLite fast read + AppleScript safe write for macOS Notes.app",
+  "long_description": "MCP server providing 18 tools for macOS Apple Notes.app. Dual-track architecture: direct NoteStore.sqlite reads (<10 ms for 1000+ notes) and AppleScript writes that preserve CloudKit sync. Supports folders CRUD, notes CRUD with dual-track body (plaintext or HTML input, both returned on read), keyword search, batch operations, and process-local undo/redo. Falls back to AppleScript for reads when Full Disk Access is not granted. Requires macOS 13 or later.",
+  "author": {
+    "name": "Che Cheng",
+    "url": "https://github.com/kiki830621"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/PsychQuant/che-apple-notes-mcp.git"
+  },
+  "homepage": "https://github.com/PsychQuant/che-apple-notes-mcp",
+  "support": "https://github.com/PsychQuant/che-apple-notes-mcp/issues",
+  "keywords": ["apple-notes", "notes", "macos", "applescript", "sqlite", "productivity"],
+  "license": "MIT",
+  "privacy_policies": ["https://github.com/PsychQuant/che-apple-notes-mcp/blob/main/mcpb/PRIVACY.md"],
+  "server": {
+    "type": "binary",
+    "entry_point": "server/CheAppleNotesMCP",
+    "mcp_config": {
+      "command": "${__dirname}/server/CheAppleNotesMCP",
+      "args": [],
+      "env": {}
+    }
+  },
+  "tools": [
+    { "name": "list_folders", "description": "List all note folders across all accounts (iCloud / On My Mac)" },
+    { "name": "create_folder", "description": "Create a new folder in a specific account" },
+    { "name": "update_folder", "description": "Rename a folder" },
+    { "name": "delete_folder", "description": "Delete an empty folder" },
+    { "name": "list_notes", "description": "List notes with filters (folder, account, pinned, locked, date range) and optional body inclusion" },
+    { "name": "list_notes_quick", "description": "Preset ranges: recent, today, this_week, pinned" },
+    { "name": "get_note", "description": "Fetch a single note with full body (text + HTML) and metadata" },
+    { "name": "create_note", "description": "Create a note; body_text XOR body_html; optional folder + account" },
+    { "name": "update_note", "description": "Update a note's title and/or body by id" },
+    { "name": "delete_note", "description": "Delete a note by id" },
+    { "name": "move_note", "description": "Move a note to a different folder" },
+    { "name": "search_notes", "description": "SQL LIKE keyword search over title + snippet; any or all match mode" },
+    { "name": "create_notes_batch", "description": "Create multiple notes in one AppleScript dispatch" },
+    { "name": "move_notes_batch", "description": "Move multiple notes to the same destination folder" },
+    { "name": "delete_notes_batch", "description": "Delete multiple notes" },
+    { "name": "undo", "description": "Revert the most recent write operation (process-local stack)" },
+    { "name": "redo", "description": "Reapply an undone operation" },
+    { "name": "undo_history", "description": "List the in-memory undo history" }
+  ],
+  "compatibility": {
+    "platforms": ["darwin"]
+  }
+}
