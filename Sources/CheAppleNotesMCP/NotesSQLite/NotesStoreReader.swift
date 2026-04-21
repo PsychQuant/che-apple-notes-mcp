@@ -262,6 +262,78 @@ final class NotesStoreReader {
         }
     }
 
+    // MARK: - Share metadata
+
+    /// Resolve share metadata for a note or folder by its `ZIDENTIFIER`.
+    ///
+    /// Two-stage lookup:
+    /// 1. Query `ZICINVITATION` joined to `ZICCLOUDSYNCINGOBJECT` via ZROOTOBJECT.
+    ///    If a row exists, return full metadata.
+    /// 2. Fall back to heuristic on the root item itself (ZSERVERSHAREDATA /
+    ///    ZZONEOWNERNAME). A hit yields `{isShared: true}` with other fields
+    ///    nil — the item is shared but lacks a dedicated invitation record.
+    /// 3. Neither hits → `ShareMetadata.notShared`.
+    func getShareMetadata(identifier: String) throws -> ShareMetadata {
+        if let fromInvitation = try shareMetadataFromInvitation(identifier: identifier) {
+            return fromInvitation
+        }
+        if try isRootObjectSharedByHeuristic(identifier: identifier) {
+            return ShareMetadata(
+                isShared: true,
+                rootObjectType: nil,
+                title: nil,
+                snippet: nil,
+                shareURL: nil,
+                noteCount: nil,
+                subfolderCount: nil,
+                receivedDate: nil,
+                serverShareDataPresent: false
+            )
+        }
+        return .notShared
+    }
+
+    private func shareMetadataFromInvitation(identifier: String) throws -> ShareMetadata? {
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, SQLQueries.shareMetadataByRootIdentifier, -1, &stmt, nil) == SQLITE_OK else {
+            throw NotesSQLiteError.prepareFailed(
+                sql: SQLQueries.shareMetadataByRootIdentifier,
+                message: String(cString: sqlite3_errmsg(db))
+            )
+        }
+        defer { sqlite3_finalize(stmt) }
+        try bind(stmt: stmt, name: ":rootIdentifier", value: identifier)
+
+        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+
+        return ShareMetadata(
+            isShared: true,
+            rootObjectType: columnText(stmt, 0),
+            title: columnText(stmt, 1),
+            snippet: columnText(stmt, 2),
+            shareURL: columnText(stmt, 3),
+            noteCount: columnIntOptional(stmt, 4),
+            subfolderCount: columnIntOptional(stmt, 5),
+            receivedDate: SQLQueries.coreDataDate(columnDoubleOptional(stmt, 6)),
+            serverShareDataPresent: sqlite3_column_int(stmt, 7) != 0
+        )
+    }
+
+    private func isRootObjectSharedByHeuristic(identifier: String) throws -> Bool {
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, SQLQueries.sharedRootObjectHeuristic, -1, &stmt, nil) == SQLITE_OK else {
+            throw NotesSQLiteError.prepareFailed(
+                sql: SQLQueries.sharedRootObjectHeuristic,
+                message: String(cString: sqlite3_errmsg(db))
+            )
+        }
+        defer { sqlite3_finalize(stmt) }
+        try bind(stmt: stmt, name: ":rootIdentifier", value: identifier)
+
+        guard sqlite3_step(stmt) == SQLITE_ROW else { return false }
+        return sqlite3_column_int(stmt, 0) != 0
+    }
+
     // MARK: - Search
 
     func searchNotes(keywords: [String], matchAll: Bool = false, limit: Int? = nil) throws -> [Note] {
