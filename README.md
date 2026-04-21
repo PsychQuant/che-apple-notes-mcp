@@ -226,6 +226,37 @@ Available account names typically include `iCloud`, `On My Mac`, plus any config
 - **1 MB body cap** per note.
 - Tested on **macOS 13/14/15**; protobuf schema may drift on future macOS.
 
+## Testing
+
+The project ships with two test targets that run under Swift Testing (`@Test` + `#expect`). Swift 6.0 toolchain is required (Xcode 16+ ships it).
+
+```bash
+make test-unit      # Pure-function unit tests — safe for CI, no macOS automation needed
+make test-e2e       # End-to-end tests — requires running Notes.app + permissions
+```
+
+### Unit tests (`CheAppleNotesMCPTests`)
+
+Cover AppleScript escaping, body/HTML formatting, protobuf decoding, SQL query templates, folder hierarchy, note entity, attachment locator, and capability detection. No Notes.app, no SQLite fixture, no network access.
+
+### E2E tests (`CheAppleNotesMCPE2ETests`)
+
+Spawn `.build/debug/CheAppleNotesMCP` as a subprocess and exercise every MCP tool over stdio JSON-RPC. Each test operates inside a dedicated `__CheMCPTest_{UUID}__` folder under **On My Mac** — the folder is created at setup and deleted at teardown. iCloud is intentionally skipped to avoid sync delays.
+
+First-time setup:
+
+1. **Grant Full Disk Access** to the debug binary (so SQLite read path works). Open System Settings → Privacy & Security → Full Disk Access → drag in `.build/debug/CheAppleNotesMCP`.
+2. **Grant Automation permission** for Notes.app. Run once: `./.build/debug/CheAppleNotesMCP --setup` — this triggers the system consent dialog.
+3. Run `make test-e2e`.
+
+If a test is interrupted and leaves `__CheMCPTest_*__` folders behind:
+
+```bash
+./scripts/cleanup-test-folders.sh
+```
+
+E2E tests are **not** part of CI — macOS GitHub runners don't have Notes.app permissions. Run them locally before releases.
+
 ## Version History
 
 | Version | Changes |
@@ -236,7 +267,7 @@ Available account names typically include `iCloud`, `On My Mac`, plus any config
 
 - **Current Version**: v0.1.0
 - **macOS**: 13.0 or later
-- **Swift**: 5.9+ (6.x with Swift 5 fallback)
+- **Swift**: 6.0+ toolchain (executable target pinned to Swift 5 language mode; test targets use Swift Testing)
 - **MCP SDK**: modelcontextprotocol/swift-sdk 0.12.x
 - **Architecture**: Universal binary (arm64 + x86_64)
 - **Code signing**: ad-hoc (`codesign --sign -`)

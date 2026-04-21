@@ -2,7 +2,7 @@ BINARY_NAME := CheAppleNotesMCP
 
 FALLBACK_FLAGS := $(shell swift build 2>&1 | grep -q "SendingRisksDataRace" && echo "-Xswiftc -swift-version -Xswiftc 5")
 
-.PHONY: build release install clean test
+.PHONY: build release install clean test test-unit test-e2e
 
 build:
 	swift build $(FALLBACK_FLAGS)
@@ -18,6 +18,16 @@ install: release
 
 test:
 	swift test $(FALLBACK_FLAGS)
+
+# Unit tests only — safe for CI (no Notes.app, no Automation permission).
+test-unit:
+	swift test $(FALLBACK_FLAGS) --filter CheAppleNotesMCPTests
+
+# E2E tests — requires Notes.app, Full Disk Access, and Automation permission
+# for the debug binary. Run `make build` implicitly so the subprocess target
+# is up to date.
+test-e2e: build
+	swift test $(FALLBACK_FLAGS) --filter CheAppleNotesMCPE2ETests
 
 clean:
 	swift package clean

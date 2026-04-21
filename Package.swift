@@ -1,4 +1,4 @@
-// swift-tools-version: 5.9
+// swift-tools-version: 6.0
 import PackageDescription
 
 let package = Package(
@@ -17,6 +17,9 @@ let package = Package(
             ],
             path: "Sources/CheAppleNotesMCP",
             exclude: ["Info.plist"],
+            swiftSettings: [
+                .swiftLanguageMode(.v5)
+            ],
             linkerSettings: [
                 .unsafeFlags([
                     "-Xlinker", "-sectcreate",
@@ -30,6 +33,11 @@ let package = Package(
             name: "CheAppleNotesMCPTests",
             dependencies: ["CheAppleNotesMCP"],
             path: "Tests/CheAppleNotesMCPTests"
+        ),
+        .testTarget(
+            name: "CheAppleNotesMCPE2ETests",
+            dependencies: ["CheAppleNotesMCP"],
+            path: "Tests/CheAppleNotesMCPE2ETests"
         )
     ]
 )

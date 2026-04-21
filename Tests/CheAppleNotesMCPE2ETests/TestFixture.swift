@@ -1,0 +1,119 @@
+import Foundation
+
+/// Descriptor for a freshly-created test fixture folder.
+/// `account` is the resolved account name reported by the server, or `nil`
+/// when the fixture fell back to the default account.
+struct FixtureFolder: Sendable {
+    let name: String
+    let id: String
+    let account: String?
+}
+
+/// Errors raised while setting up the fixture.
+enum FixtureError: Error, CustomStringConvertible {
+    case setupFailed(String)
+
+    var description: String {
+        switch self {
+        case .setupFailed(let s): return "fixture setup failed: \(s)"
+        }
+    }
+}
+
+/// Run `body` inside a freshly created test fixture folder. The folder is
+/// named `__CheMCPTest_{UUID}__` so bulk cleanup scripts can recognize it.
+/// The folder and all notes inside it are deleted on teardown even if the
+/// body throws.
+///
+/// Account resolution: prefers `On My Mac` (no iCloud sync lag) when
+/// available, otherwise falls back to the server's default account. The
+/// resolved account is exposed on `FixtureFolder.account` (nil when default).
+func withFixtureFolder(
+    _ body: (MCPClient, FixtureFolder) async throws -> Void
+) async throws {
+    let client = try MCPClient()
+    _ = try await client.initialize()
+
+    let folderName = "__CheMCPTest_\(UUID().uuidString.uppercased())__"
+    let resolvedAccount = try await createFixtureFolder(client: client, folderName: folderName)
+    guard let (folderId, account) = resolvedAccount else {
+        await client.close()
+        throw FixtureError.setupFailed("create_folder failed on both On My Mac and default account")
+    }
+
+    let fixture = FixtureFolder(name: folderName, id: folderId, account: account)
+
+    var bodyError: Error?
+    do {
+        try await body(client, fixture)
+    } catch {
+        bodyError = error
+    }
+
+    await teardownBestEffort(client: client, fixture: fixture)
+    await client.close()
+
+    if let bodyError { throw bodyError }
+}
+
+/// Try to create the fixture folder under `On My Mac`; if that account
+/// doesn't exist on the host, retry with the server's default account.
+/// Returns `(folderId, resolvedAccountName?)` or nil if both attempts fail.
+private func createFixtureFolder(client: MCPClient, folderName: String) async throws -> (String, String?)? {
+    // First attempt: prefer On My Mac when present.
+    let preferredArgs = #"{"title":"\#(folderName)","account":"On My Mac"}"#
+    let preferred = try await client.callTool(name: "create_folder", arguments: preferredArgs)
+    if !preferred.isError,
+       let id = try? parseFolderId(from: preferred.text), !id.isEmpty
+    {
+        return (id, "On My Mac")
+    }
+    // Fallback: let the server pick the default account.
+    let fallbackArgs = #"{"title":"\#(folderName)"}"#
+    let fallback = try await client.callTool(name: "create_folder", arguments: fallbackArgs)
+    if !fallback.isError,
+       let id = try? parseFolderId(from: fallback.text), !id.isEmpty
+    {
+        return (id, nil)
+    }
+    return nil
+}
+
+/// Delete every note in the fixture folder, then the folder itself.
+/// Silent on failure — the cleanup script (`scripts/cleanup-test-folders.sh`)
+/// is the escape hatch.
+private func teardownBestEffort(client: MCPClient, fixture: FixtureFolder) async {
+    let listArgs = #"{"folder_id":"\#(fixture.id)"}"#
+    if let list = try? await client.callTool(name: "list_notes", arguments: listArgs),
+       !list.isError,
+       let ids = try? parseNoteIds(from: list.text),
+       !ids.isEmpty
+    {
+        let jsonIds = ids.map { "\"\($0)\"" }.joined(separator: ",")
+        let batchArgs = "{\"ids\":[\(jsonIds)]}"
+        _ = try? await client.callTool(name: "delete_notes_batch", arguments: batchArgs)
+    }
+
+    let delArgs = #"{"id":"\#(fixture.id)"}"#
+    _ = try? await client.callTool(name: "delete_folder", arguments: delArgs)
+}
+
+// MARK: - JSON parsing helpers
+
+private struct FolderResponseDTO: Decodable {
+    let id: String
+}
+
+private struct NoteListItemDTO: Decodable {
+    let id: String
+}
+
+private func parseFolderId(from text: String) throws -> String {
+    let data = Data(text.utf8)
+    return try JSONDecoder().decode(FolderResponseDTO.self, from: data).id
+}
+
+private func parseNoteIds(from text: String) throws -> [String] {
+    let data = Data(text.utf8)
+    return try JSONDecoder().decode([NoteListItemDTO].self, from: data).map { $0.id }
+}

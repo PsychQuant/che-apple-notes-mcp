@@ -20,3 +20,5 @@ dist/
 # Session / local state
 .remember/
 .claude/settings.local.json
+.spectra/
+openspec/.vector-search.db*
