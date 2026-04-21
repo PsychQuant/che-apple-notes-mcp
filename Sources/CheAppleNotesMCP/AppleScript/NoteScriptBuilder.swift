@@ -156,6 +156,21 @@ enum NoteScriptBuilder {
         """
     }
 
+    /// Single-roundtrip metadata + body fetch, used when SQLite is unavailable.
+    /// Returns tab-separated values: title \t body_html \t creation_date \t
+    /// modification_date \t folder_name \t account_name. Fields are separated
+    /// by \t because AppleScript records are awkward to parse from NSAppleEventDescriptor.
+    static func getNoteFull(id: String) -> String {
+        """
+        tell application "Notes"
+            set n to note id \(AppleScriptEscape.quote(id))
+            set f to container of n
+            set a to container of f
+            return (name of n) & "\t" & (body of n) & "\t" & ((creation date of n) as string) & "\t" & ((modification date of n) as string) & "\t" & (name of f) & "\t" & (name of a)
+        end tell
+        """
+    }
+
     // MARK: - Batch
 
     static func createNotesBatch(entries: [(title: String, bodyHTML: String, folder: String?, account: String?)]) -> String {

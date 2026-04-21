@@ -148,7 +148,13 @@ final class NotesStoreReader {
         var sql = SQLQueries.listNotes
         var extras: [String] = []
 
-        if options.folderIdentifier != nil {
+        // folder_id may arrive as either a bare ZIDENTIFIER UUID or the
+        // AppleScript URL form `x-coredata://<store-uuid>/ICFolder/p<PK>`.
+        // Extract the PK and filter on ZFOLDER when the URL form is given.
+        let folderPKFromURL = Self.extractCoreDataPK(options.folderIdentifier)
+        if folderPKFromURL != nil {
+            extras.append("n.ZFOLDER = :folderPK")
+        } else if options.folderIdentifier != nil {
             extras.append("f.ZIDENTIFIER = :folderIdent")
         }
         if options.accountName != nil {
@@ -193,7 +199,9 @@ final class NotesStoreReader {
         try bind(stmt: stmt, name: ":noteEntityID", value: Int64(noteEnt))
         try bind(stmt: stmt, name: ":folderEntityID", value: Int64(folderEnt))
         try bind(stmt: stmt, name: ":accountEntityID", value: Int64(accountEnt))
-        if let ident = options.folderIdentifier {
+        if let pk = folderPKFromURL {
+            try bind(stmt: stmt, name: ":folderPK", value: pk)
+        } else if let ident = options.folderIdentifier {
             try bind(stmt: stmt, name: ":folderIdent", value: ident)
         }
         if let name = options.accountName {
@@ -353,6 +361,17 @@ final class NotesStoreReader {
         let data = Data(bytes: blobPtr, count: Int(length))
         let encrypted = sqlite3_column_int(stmt, 1) != 0
         return BodyBlob(data: data, encrypted: encrypted)
+    }
+
+    // MARK: - Helpers
+
+    /// Parse `x-coredata://<store-uuid>/ICFolder/p<N>` (or ICNote) and return N,
+    /// or nil if the input is a bare UUID / unrecognized form.
+    static func extractCoreDataPK(_ id: String?) -> Int64? {
+        guard let id, id.hasPrefix("x-coredata://") else { return nil }
+        guard let pRange = id.range(of: "/p", options: .backwards) else { return nil }
+        let pkStr = id[pRange.upperBound...]
+        return Int64(pkStr)
     }
 
     // MARK: - Named parameter binding helpers

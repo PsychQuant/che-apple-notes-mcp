@@ -140,6 +140,34 @@ final class NotesController {
         try runReturningString(NoteScriptBuilder.getNoteBody(id: id))
     }
 
+    struct ASNoteFull {
+        let title: String
+        let bodyHTML: String
+        let creationDate: String
+        let modificationDate: String
+        let folderName: String
+        let accountName: String
+    }
+
+    /// Fetch full note metadata + body in one AppleScript roundtrip.
+    /// Used when SQLite is unavailable (FDA not granted). Returns nil if the
+    /// note cannot be found or the response is malformed.
+    func getNoteFull(id: String) throws -> ASNoteFull {
+        let raw = try runReturningString(NoteScriptBuilder.getNoteFull(id: id))
+        let parts = raw.components(separatedBy: "\t")
+        guard parts.count == 6 else {
+            throw ControllerError.unexpectedResult("getNoteFull returned \(parts.count) fields, expected 6")
+        }
+        return ASNoteFull(
+            title: parts[0],
+            bodyHTML: parts[1],
+            creationDate: parts[2],
+            modificationDate: parts[3],
+            folderName: parts[4],
+            accountName: parts[5]
+        )
+    }
+
     // MARK: - Batch
 
     func createNotesBatch(_ entries: [(title: String, bodyHTML: String, folder: String?, account: String?)]) throws -> [String] {

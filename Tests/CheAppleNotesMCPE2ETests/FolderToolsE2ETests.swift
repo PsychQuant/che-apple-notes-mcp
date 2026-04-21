@@ -5,9 +5,15 @@ import Testing
 
     @Test func listFoldersIncludesFixtureFolder() async throws {
         try await withFixtureFolder { client, fixture in
+            // Filter by the account the fixture actually landed in. Hosts
+            // without "On My Mac" fall back to the server's default (iCloud),
+            // so a hardcoded filter would return empty on iCloud-only Macs.
+            let args: String = fixture.account.map {
+                #"{"account":"\#($0)"}"#
+            } ?? "{}"
             let result = try await client.callTool(
                 name: "list_folders",
-                arguments: #"{"account":"On My Mac"}"#
+                arguments: args
             )
             #expect(!result.isError)
             #expect(result.text.contains(fixture.name))
@@ -21,7 +27,7 @@ import Testing
             let tempName = "__CheMCPTest_\(UUID().uuidString.uppercased())__"
             let result = try await client.callTool(
                 name: "create_folder",
-                arguments: #"{"title":"\#(tempName)}"#
+                arguments: #"{"title":"\#(tempName)"}"#
             )
             #expect(!result.isError)
 
@@ -60,7 +66,7 @@ import Testing
             let name = "__CheMCPTest_\(UUID().uuidString.uppercased())__todelete"
             let createResult = try await client.callTool(
                 name: "create_folder",
-                arguments: #"{"title":"\#(name)}"#
+                arguments: #"{"title":"\#(name)"}"#
             )
             struct FolderDTO: Decodable { let id: String }
             let dto = try JSONDecoder().decode(FolderDTO.self, from: Data(createResult.text.utf8))

@@ -15,6 +15,8 @@ import Testing
                 arguments: #"{"title":"Beta","body_text":"b","folder":"\#(fixture.name)"}"#
             )
 
+            try await settleForNotesFlush()
+
             let list = try await client.callTool(
                 name: "list_notes",
                 arguments: #"{"folder_id":"\#(fixture.id)"}"#

@@ -25,8 +25,11 @@ test-unit:
 
 # E2E tests — requires Notes.app, Full Disk Access, and Automation permission
 # for the debug binary. Run `make build` implicitly so the subprocess target
-# is up to date.
+# is up to date, then probe FDA via grant-debug-fda.sh (non-blocking: the
+# script exits 1 if FDA missing, prints instructions, and we continue so
+# AS-fallback tests still run).
 test-e2e: build
+	@./scripts/grant-debug-fda.sh || true
 	swift test $(FALLBACK_FLAGS) --filter CheAppleNotesMCPE2ETests
 
 clean:

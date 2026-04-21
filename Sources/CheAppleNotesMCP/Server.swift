@@ -490,12 +490,17 @@ final class CheAppleNotesMCPServer {
             }
             return jsonify(dict)
         }
-        // AppleScript only
-        let html = try applescript.getNoteBody(id: id)
+        // AppleScript fallback — fetch title + metadata + body in one roundtrip.
+        let full = try applescript.getNoteFull(id: id)
         return jsonify([
             "id": id,
-            "body_html": html,
-            "body_text": BodyHTMLRenderer.htmlToPlaintext(html),
+            "title": full.title,
+            "body_html": full.bodyHTML,
+            "body_text": BodyHTMLRenderer.htmlToPlaintext(full.bodyHTML),
+            "folder": full.folderName,
+            "account": full.accountName,
+            "created_at": full.creationDate,
+            "modified_at": full.modificationDate,
             "source": "applescript"
         ] as [String: Any])
     }

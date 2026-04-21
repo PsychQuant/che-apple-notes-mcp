@@ -20,6 +20,16 @@ enum FixtureError: Error, CustomStringConvertible {
     }
 }
 
+/// Yield the thread briefly so Notes.app can flush recent AppleScript writes
+/// into NoteStore.sqlite. AppleScript `make note` / `set body` returns before
+/// the WAL checkpoint completes — SQLite reads that race the flush get a
+/// stale snapshot. Call this after any write inside a test before asserting
+/// via SQLite-backed reads (list_notes, search_notes, list_notes_quick,
+/// get_note when FDA is granted).
+func settleForNotesFlush() async throws {
+    try await Task.sleep(nanoseconds: 500_000_000)
+}
+
 /// Run `body` inside a freshly created test fixture folder. The folder is
 /// named `__CheMCPTest_{UUID}__` so bulk cleanup scripts can recognize it.
 /// The folder and all notes inside it are deleted on teardown even if the
@@ -42,6 +52,12 @@ func withFixtureFolder(
     }
 
     let fixture = FixtureFolder(name: folderName, id: folderId, account: account)
+
+    // Give Notes.app a moment to flush the freshly-created folder into
+    // NoteStore.sqlite. AppleScript `make folder` returns before the WAL has
+    // been checkpointed; SQLite reads that race the flush get an empty result.
+    // 500 ms is enough in practice — bump if CI on slower hardware flakes.
+    try await Task.sleep(nanoseconds: 500_000_000)
 
     var bodyError: Error?
     do {
