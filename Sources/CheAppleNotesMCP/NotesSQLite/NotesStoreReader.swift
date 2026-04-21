@@ -118,7 +118,8 @@ final class NotesStoreReader {
                 accountName: columnText(stmt, 7),
                 parentPK: columnInt64Optional(stmt, 4),
                 isHiddenContainer: sqlite3_column_int(stmt, 5) != 0,
-                sortOrder: columnIntOptional(stmt, 6)
+                sortOrder: columnIntOptional(stmt, 6),
+                shared: sqlite3_column_int(stmt, 8) != 0
             ))
         }
         return results
@@ -235,6 +236,7 @@ final class NotesStoreReader {
                 isPinned: sqlite3_column_int(stmt, 9) != 0,
                 isPasswordProtected: sqlite3_column_int(stmt, 10) != 0,
                 snippet: columnText(stmt, 11),
+                shared: sqlite3_column_int(stmt, 12) != 0,
                 bodyText: nil,
                 bodyHTML: nil
             )
@@ -308,6 +310,7 @@ final class NotesStoreReader {
                 isPinned: sqlite3_column_int(stmt, 9) != 0,
                 isPasswordProtected: sqlite3_column_int(stmt, 10) != 0,
                 snippet: columnText(stmt, 11),
+                shared: sqlite3_column_int(stmt, 12) != 0,
                 bodyText: nil,
                 bodyHTML: nil
             ))

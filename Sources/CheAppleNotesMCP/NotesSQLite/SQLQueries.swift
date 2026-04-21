@@ -16,6 +16,11 @@ enum SQLQueries {
 
     /// Folders. We intentionally select multiple potential title/account FK
     /// columns and pick the non-null one at runtime — schema varies by macOS.
+    ///
+    /// `shared` is derived via heuristic because Notes' SQLite schema has no
+    /// direct boolean. `ZSERVERSHAREDATA IS NOT NULL` means the user owns a
+    /// CloudKit share for this folder; `ZZONEOWNERNAME IS NOT NULL` means
+    /// someone shared this folder with the user. Either signal is sufficient.
     static let listFolders = """
         SELECT
             f.Z_PK,
@@ -25,7 +30,8 @@ enum SQLQueries {
             f.ZPARENT,
             f.ZISHIDDENNOTECONTAINER,
             f.ZSORTORDER,
-            a.ZNAME AS account_name
+            a.ZNAME AS account_name,
+            (f.ZSERVERSHAREDATA IS NOT NULL OR f.ZZONEOWNERNAME IS NOT NULL) AS shared
         FROM ZICCLOUDSYNCINGOBJECT f
         LEFT JOIN ZICCLOUDSYNCINGOBJECT a
             ON a.Z_PK = f.ZOWNER AND a.Z_ENT = :accountEntityID
@@ -35,6 +41,8 @@ enum SQLQueries {
 
     /// List notes in a folder (or all) with basic metadata. Body is fetched
     /// separately via `noteBodyBlob` because it's expensive.
+    ///
+    /// `shared` heuristic mirrors `listFolders` — see that doc comment.
     static let listNotes = """
         SELECT
             n.Z_PK,
@@ -48,7 +56,8 @@ enum SQLQueries {
             COALESCE(n.ZMODIFICATIONDATE1, n.ZMODIFICATIONDATE) AS modification_date,
             n.ZISPINNED,
             n.ZISPASSWORDPROTECTED,
-            n.ZSNIPPET
+            n.ZSNIPPET,
+            (n.ZSERVERSHAREDATA IS NOT NULL OR n.ZZONEOWNERNAME IS NOT NULL) AS shared
         FROM ZICCLOUDSYNCINGOBJECT n
         LEFT JOIN ZICCLOUDSYNCINGOBJECT f
             ON f.Z_PK = n.ZFOLDER AND f.Z_ENT = :folderEntityID

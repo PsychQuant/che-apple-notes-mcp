@@ -9,7 +9,8 @@ import Testing
         parent: Int64? = nil,
         account: String? = "iCloud",
         hidden: Bool = false,
-        sortOrder: Int? = nil
+        sortOrder: Int? = nil,
+        shared: Bool = false
     ) -> Folder {
         Folder(
             pk: pk,
@@ -19,7 +20,8 @@ import Testing
             accountName: account,
             parentPK: parent,
             isHiddenContainer: hidden,
-            sortOrder: sortOrder
+            sortOrder: sortOrder,
+            shared: shared
         )
     }
 

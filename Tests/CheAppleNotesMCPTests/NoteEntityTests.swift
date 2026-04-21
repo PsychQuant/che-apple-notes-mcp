@@ -7,7 +7,8 @@ import Testing
     private func makeNote(
         pk: Int64 = 42,
         identifier: String = "note-uuid",
-        accountIdentifier: String? = "acct-uuid"
+        accountIdentifier: String? = "acct-uuid",
+        shared: Bool = false
     ) -> Note {
         Note(
             pk: pk,
@@ -22,6 +23,7 @@ import Testing
             isPinned: false,
             isPasswordProtected: false,
             snippet: nil,
+            shared: shared,
             bodyText: nil,
             bodyHTML: nil,
             bodyDecodeError: false
@@ -46,6 +48,16 @@ import Testing
     @Test func bodyDecodeErrorDefaultsFalse() {
         let n = makeNote()
         #expect(!n.bodyDecodeError)
+    }
+
+    @Test func sharedDefaultsFalse() {
+        let n = makeNote()
+        #expect(!n.shared)
+    }
+
+    @Test func sharedCanBeSetTrue() {
+        let n = makeNote(shared: true)
+        #expect(n.shared)
     }
 
     @Test func attachmentDefaultsLocalPathNil() {

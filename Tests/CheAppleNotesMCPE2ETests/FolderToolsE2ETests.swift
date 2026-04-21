@@ -60,6 +60,24 @@ import Testing
         }
     }
 
+    @Test func listFoldersIncludesSharedField() async throws {
+        try await withFixtureFolder { client, fixture in
+            let args: String = fixture.account.map {
+                #"{"account":"\#($0)"}"#
+            } ?? "{}"
+            let result = try await client.callTool(name: "list_folders", arguments: args)
+            #expect(!result.isError)
+
+            struct Item: Decodable { let title: String; let shared: Bool }
+            let items = try JSONDecoder().decode([Item].self, from: Data(result.text.utf8))
+            #expect(!items.isEmpty)
+            // Field must be present and decodable as Bool for every folder.
+            // We do not assert the value — host environments may have shared folders.
+            let fixtureRow = items.first { $0.title == fixture.name }
+            #expect(fixtureRow != nil)
+        }
+    }
+
     @Test func deleteFolderRemovesAnEmptyFolder() async throws {
         try await withFixtureFolder { client, _ in
             // Create a second empty folder dedicated to deletion verification.

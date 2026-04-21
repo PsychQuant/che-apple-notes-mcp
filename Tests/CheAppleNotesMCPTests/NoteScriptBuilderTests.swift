@@ -12,6 +12,11 @@ import Testing
         #expect(s.contains("repeat with f in folders of a"))
     }
 
+    @Test func listFoldersScriptReportsSharedFlag() {
+        let s = NoteScriptBuilder.listFolders()
+        #expect(s.contains("shared of f"))
+    }
+
     @Test func createFolderUsesDefaultAccountWhenOmitted() {
         let s = NoteScriptBuilder.createFolder(title: "Inbox", account: nil)
         #expect(s.contains("at default account"))
@@ -81,6 +86,16 @@ import Testing
     @Test func listNotesInFolderEmitsRepeatLoop() {
         let s = NoteScriptBuilder.listNotesInFolder(folderName: "Inbox", account: nil, limit: nil)
         #expect(s.contains("repeat with n in notes of folder \"Inbox\""))
+    }
+
+    @Test func listNotesInFolderScriptReportsSharedFlag() {
+        let s = NoteScriptBuilder.listNotesInFolder(folderName: "Inbox", account: nil, limit: nil)
+        #expect(s.contains("shared of n"))
+    }
+
+    @Test func getNoteFullScriptReportsSharedFlag() {
+        let s = NoteScriptBuilder.getNoteFull(id: "note-1")
+        #expect(s.contains("shared of n"))
     }
 
     @Test func listNotesInFolderLimitEmitsExit() {

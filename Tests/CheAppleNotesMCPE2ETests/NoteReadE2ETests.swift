@@ -48,6 +48,26 @@ import Testing
         }
     }
 
+    @Test func listNotesIncludesSharedField() async throws {
+        try await withFixtureFolder { client, fixture in
+            _ = try await client.callTool(
+                name: "create_note",
+                arguments: #"{"title":"SharedCheck","body_text":"x","folder":"\#(fixture.name)"}"#
+            )
+            try await settleForNotesFlush()
+
+            let list = try await client.callTool(
+                name: "list_notes",
+                arguments: #"{"folder_id":"\#(fixture.id)"}"#
+            )
+            #expect(!list.isError)
+
+            struct Item: Decodable { let title: String; let shared: Bool }
+            let items = try JSONDecoder().decode([Item].self, from: Data(list.text.utf8))
+            #expect(items.contains { $0.title == "SharedCheck" })
+        }
+    }
+
     @Test func getNoteReturnsCreatedNoteByID() async throws {
         try await withFixtureFolder { client, fixture in
             let createResult = try await client.callTool(
