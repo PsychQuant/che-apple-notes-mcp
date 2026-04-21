@@ -20,6 +20,11 @@ struct Folder {
     let parentPK: Int64?    // ZPARENT FK for nested folders
     let isHiddenContainer: Bool
     let sortOrder: Int?
+    /// True when the folder participates in a CloudKit share — either the user
+    /// owns it (ZSERVERSHAREDATA present) or it was shared with them
+    /// (ZZONEOWNERNAME present). AppleScript `shared of folder` is preferred
+    /// when available; SQLite heuristic is a fallback.
+    let shared: Bool
 }
 
 struct Note {
@@ -35,6 +40,9 @@ struct Note {
     let isPinned: Bool
     let isPasswordProtected: Bool
     let snippet: String?  // ZSNIPPET from SQLite (preview line)
+    /// True when this note (or its enclosing folder) participates in a CloudKit
+    /// share. See `Folder.shared` for the heuristic.
+    let shared: Bool
 
     /// Construct the AppleScript `note id "..."` URL form. Needed because
     /// Notes.app's AppleScript dictionary expects `x-coredata://<acct-uuid>/ICNote/p<Z_PK>`
