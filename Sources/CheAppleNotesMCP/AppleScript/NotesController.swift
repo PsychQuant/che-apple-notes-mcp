@@ -66,14 +66,20 @@ final class NotesController {
         let accountName: String
         let folderName: String
         let folderID: String
+        let shared: Bool
     }
 
     func listFolders() throws -> [ASFolderRow] {
         let lines = try runReturningList(NoteScriptBuilder.listFolders())
         return lines.compactMap { line in
             let parts = line.components(separatedBy: "\t")
-            guard parts.count == 3 else { return nil }
-            return ASFolderRow(accountName: parts[0], folderName: parts[1], folderID: parts[2])
+            guard parts.count == 4 else { return nil }
+            return ASFolderRow(
+                accountName: parts[0],
+                folderName: parts[1],
+                folderID: parts[2],
+                shared: parts[3] == "true"
+            )
         }
     }
 
@@ -120,6 +126,7 @@ final class NotesController {
         let title: String
         let creationDate: String
         let modificationDate: String
+        let shared: Bool
     }
 
     func listNotesInFolder(_ folderName: String, account: String?, limit: Int?) throws -> [ASNoteRow] {
@@ -128,10 +135,11 @@ final class NotesController {
         ))
         return lines.compactMap { line in
             let parts = line.components(separatedBy: "\t")
-            guard parts.count == 4 else { return nil }
+            guard parts.count == 5 else { return nil }
             return ASNoteRow(
                 id: parts[0], title: parts[1],
-                creationDate: parts[2], modificationDate: parts[3]
+                creationDate: parts[2], modificationDate: parts[3],
+                shared: parts[4] == "true"
             )
         }
     }
@@ -147,6 +155,7 @@ final class NotesController {
         let modificationDate: String
         let folderName: String
         let accountName: String
+        let shared: Bool
     }
 
     /// Fetch full note metadata + body in one AppleScript roundtrip.
@@ -155,8 +164,8 @@ final class NotesController {
     func getNoteFull(id: String) throws -> ASNoteFull {
         let raw = try runReturningString(NoteScriptBuilder.getNoteFull(id: id))
         let parts = raw.components(separatedBy: "\t")
-        guard parts.count == 6 else {
-            throw ControllerError.unexpectedResult("getNoteFull returned \(parts.count) fields, expected 6")
+        guard parts.count == 7 else {
+            throw ControllerError.unexpectedResult("getNoteFull returned \(parts.count) fields, expected 7")
         }
         return ASNoteFull(
             title: parts[0],
@@ -164,7 +173,8 @@ final class NotesController {
             creationDate: parts[2],
             modificationDate: parts[3],
             folderName: parts[4],
-            accountName: parts[5]
+            accountName: parts[5],
+            shared: parts[6] == "true"
         )
     }
 
