@@ -37,6 +37,20 @@ import Testing
         #expect(SQLQueries.listNotes.contains("n.ZCREATIONDATE)"))
     }
 
+    @Test func listFoldersExposesSharedHeuristic() {
+        // Phase 1 (#2): shared derived from ZSERVERSHAREDATA (I own the share)
+        // or ZZONEOWNERNAME (someone shared with me). No direct ZISSHARED column.
+        #expect(SQLQueries.listFolders.contains("ZSERVERSHAREDATA"))
+        #expect(SQLQueries.listFolders.contains("ZZONEOWNERNAME"))
+        #expect(SQLQueries.listFolders.contains("AS shared"))
+    }
+
+    @Test func listNotesExposesSharedHeuristic() {
+        #expect(SQLQueries.listNotes.contains("ZSERVERSHAREDATA"))
+        #expect(SQLQueries.listNotes.contains("ZZONEOWNERNAME"))
+        #expect(SQLQueries.listNotes.contains("AS shared"))
+    }
+
     @Test func noteByIdentifierAppendsIdentifierFilterAndLimit() {
         #expect(SQLQueries.noteByIdentifier.hasPrefix(SQLQueries.listNotes))
         #expect(SQLQueries.noteByIdentifier.contains(":identifier"))
