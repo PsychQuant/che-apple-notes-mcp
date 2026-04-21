@@ -369,6 +369,7 @@ final class CheAppleNotesMCPServer {
                 "id": row.folderID,
                 "title": row.folderName,
                 "account_name": row.accountName,
+                "shared": row.shared,
                 "source": "applescript"
             ]
         }
@@ -442,6 +443,7 @@ final class CheAppleNotesMCPServer {
                 "folder": folder,
                 "creation_date": row.creationDate,
                 "modification_date": row.modificationDate,
+                "shared": row.shared,
                 "source": "applescript"
             ]
         })
@@ -501,6 +503,7 @@ final class CheAppleNotesMCPServer {
             "account": full.accountName,
             "created_at": full.creationDate,
             "modified_at": full.modificationDate,
+            "shared": full.shared,
             "source": "applescript"
         ] as [String: Any])
     }
@@ -723,7 +726,8 @@ final class CheAppleNotesMCPServer {
             "account_name": f.accountName ?? "",
             "parent_pk": f.parentPK as Any,
             "is_hidden": f.isHiddenContainer,
-            "sort_order": f.sortOrder as Any
+            "sort_order": f.sortOrder as Any,
+            "shared": f.shared
         ]
     }
 
@@ -739,6 +743,7 @@ final class CheAppleNotesMCPServer {
             "pinned": n.isPinned,
             "locked": n.isPasswordProtected,
             "snippet": n.snippet ?? "",
+            "shared": n.shared,
         ]
         if let d = n.creationDate {
             dict["created_at"] = iso8601.string(from: d)
