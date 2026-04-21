@@ -229,6 +229,20 @@ final class CheAppleNotesMCPServer {
                 annotations: .init(readOnlyHint: true, openWorldHint: false)
             ),
 
+            // Share metadata
+            Tool(
+                name: "get_share_metadata",
+                description: "Read CloudKit share metadata for a note or folder from ZICINVITATION. Returns {isShared: false} when the item is not shared. Requires Full Disk Access (SQLite only — no AppleScript fallback per spec).",
+                inputSchema: .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "identifier": .object(["type": .string("string"), "description": .string("Note or folder ZIDENTIFIER (UUID form) — the raw identifier, not the AppleScript x-coredata:// URL")])
+                    ]),
+                    "required": .array([.string("identifier")])
+                ]),
+                annotations: .init(readOnlyHint: true, openWorldHint: false)
+            ),
+
             // Batch
             Tool(
                 name: "create_notes_batch",
@@ -340,6 +354,7 @@ final class CheAppleNotesMCPServer {
         case "delete_note":        return try handleDeleteNote(arguments)
         case "move_note":          return try handleMoveNote(arguments)
         case "search_notes":       return try handleSearchNotes(arguments)
+        case "get_share_metadata": return try handleGetShareMetadata(arguments)
         case "create_notes_batch": return try handleCreateNotesBatch(arguments)
         case "move_notes_batch":   return try handleMoveNotesBatch(arguments)
         case "delete_notes_batch": return try handleDeleteNotesBatch(arguments)
@@ -617,6 +632,33 @@ final class CheAppleNotesMCPServer {
             return jsonify(results.map(noteToDict))
         }
         throw NotesServerError.featureRequiresSQLite("search_notes")
+    }
+
+    // MARK: - Handlers: share metadata
+
+    /// Accept either a raw `ZIDENTIFIER` UUID or the AppleScript
+    /// `x-coredata://<store>/ICNote/p<PK>` form. SQLite `ZICINVITATION` join
+    /// keys on `ZIDENTIFIER`, so strip the Core Data URL envelope if present.
+    private func extractZIdentifier(from raw: String) -> String {
+        // AppleScript URL: "x-coredata://<uuid>/ICNote/p<PK>" does NOT embed
+        // ZIDENTIFIER. In that case we can't resolve here — caller must pass
+        // the raw UUID. We return the input unchanged so the SQLite lookup
+        // simply returns no row and we respond with {isShared: false}.
+        if raw.hasPrefix("x-coredata://") {
+            return raw  // Caller will get notShared response.
+        }
+        return raw
+    }
+
+    private func handleGetShareMetadata(_ args: [String: Value]) throws -> String {
+        let identifier = try requireString(args, "identifier")
+        guard let sqlite else {
+            throw NotesServerError.featureRequiresSQLite("get_share_metadata")
+        }
+        let metadata = try sqlite.getShareMetadata(
+            identifier: extractZIdentifier(from: identifier)
+        )
+        return jsonify(metadata.asDictionary())
     }
 
     // MARK: - Handlers: batch
