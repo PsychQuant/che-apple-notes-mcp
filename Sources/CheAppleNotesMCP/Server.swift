@@ -58,6 +58,10 @@ final class CheAppleNotesMCPServer {
                         "account": .object([
                             "type": .string("string"),
                             "description": .string("Optional account filter (e.g., 'iCloud', 'On My Mac')")
+                        ]),
+                        "shared": .object([
+                            "type": .string("boolean"),
+                            "description": .string("Filter by shared status. true: only shared folders. false: only unshared. Omit for no filter.")
                         ])
                     ])
                 ]),
@@ -120,7 +124,8 @@ final class CheAppleNotesMCPServer {
                         "modified_before": .object(["type": .string("string"), "description": .string("ISO 8601 date (modified on or before)")]),
                         "include_body": .object(["type": .string("boolean"), "description": .string("Include body_text + body_html. Default false (metadata only).")]),
                         "limit": .object(["type": .string("integer"), "description": .string("Max rows to return")]),
-                        "sort": .object(["type": .string("string"), "enum": .array([.string("asc"), .string("desc")]), "description": .string("Sort by modification date (default desc)")])
+                        "sort": .object(["type": .string("string"), "enum": .array([.string("asc"), .string("desc")]), "description": .string("Sort by modification date (default desc)")]),
+                        "shared": .object(["type": .string("boolean"), "description": .string("Filter by shared status. true: only shared notes. false: only unshared. Omit for no filter.")])
                     ])
                 ]),
                 annotations: .init(readOnlyHint: true, openWorldHint: false)
@@ -223,7 +228,8 @@ final class CheAppleNotesMCPServer {
                         "keyword": .object(["type": .string("string"), "description": .string("Single keyword")]),
                         "keywords": .object(["type": .string("array"), "description": .string("Multiple keywords")]),
                         "match_mode": .object(["type": .string("string"), "enum": .array([.string("any"), .string("all")]), "description": .string("any (OR) or all (AND). Default any.")]),
-                        "limit": .object(["type": .string("integer"), "description": .string("Max rows")])
+                        "limit": .object(["type": .string("integer"), "description": .string("Max rows")]),
+                        "shared": .object(["type": .string("boolean"), "description": .string("Filter by shared status. true: only shared notes. false: only unshared. Omit for no filter.")])
                     ])
                 ]),
                 annotations: .init(readOnlyHint: true, openWorldHint: false)
@@ -370,9 +376,11 @@ final class CheAppleNotesMCPServer {
 
     private func handleListFolders(_ args: [String: Value]) throws -> String {
         let accountFilter = args["account"]?.stringValue
+        var sharedOnly: Bool? = nil
+        if case .bool(let b)? = args["shared"] { sharedOnly = b }
 
         if let sqlite {
-            let folders = try sqlite.listFolders()
+            let folders = try sqlite.listFolders(sharedOnly: sharedOnly)
                 .filter { accountFilter == nil || $0.accountName == accountFilter }
             return jsonify(folders.map(folderToDict))
         }
@@ -429,6 +437,7 @@ final class CheAppleNotesMCPServer {
         if case .int(let n)? = args["limit"] { options.limit = n }
         if case .bool(let b)? = args["include_body"] { options.includeBody = b }
         if args["sort"]?.stringValue == "asc" { options.sortDescending = false }
+        if case .bool(let b)? = args["shared"] { options.sharedOnly = b }
 
         // Name-based folder filter requires looking up id first.
         if let folderName = args["folder"]?.stringValue, options.folderIdentifier == nil {
@@ -626,9 +635,16 @@ final class CheAppleNotesMCPServer {
         let matchAll = args["match_mode"]?.stringValue == "all"
         var limit: Int? = nil
         if case .int(let n)? = args["limit"] { limit = n }
+        var sharedOnly: Bool? = nil
+        if case .bool(let b)? = args["shared"] { sharedOnly = b }
 
         if let sqlite {
-            let results = try sqlite.searchNotes(keywords: keywords, matchAll: matchAll, limit: limit)
+            let results = try sqlite.searchNotes(
+                keywords: keywords,
+                matchAll: matchAll,
+                limit: limit,
+                sharedOnly: sharedOnly
+            )
             return jsonify(results.map(noteToDict))
         }
         throw NotesServerError.featureRequiresSQLite("search_notes")
