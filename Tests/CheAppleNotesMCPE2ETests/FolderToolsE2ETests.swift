@@ -94,7 +94,15 @@ import Testing
                 arguments: #"{"id":"\#(dto.id)"}"#
             )
             #expect(!delete.isError)
-            #expect(delete.text.contains("\"deleted\":true"))
+
+            // JSON decode (matches the pattern used by every other E2E test
+            // in this suite) — the raw-string contains-check failed against
+            // `jsonify`'s prettyPrinted output where `:` is surrounded by
+            // spaces (`"deleted" : true`).
+            struct DeleteDTO: Decodable { let deleted: Bool; let id: String }
+            let deleteDto = try JSONDecoder().decode(DeleteDTO.self, from: Data(delete.text.utf8))
+            #expect(deleteDto.deleted)
+            #expect(deleteDto.id == dto.id)
         }
     }
 }
