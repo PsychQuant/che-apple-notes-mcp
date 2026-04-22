@@ -660,28 +660,21 @@ final class CheAppleNotesMCPServer {
 
     // MARK: - Handlers: share metadata
 
-    /// Accept either a raw `ZIDENTIFIER` UUID or the AppleScript
-    /// `x-coredata://<store>/ICNote/p<PK>` form. SQLite `ZICINVITATION` join
-    /// keys on `ZIDENTIFIER`, so strip the Core Data URL envelope if present.
-    private func extractZIdentifier(from raw: String) -> String {
-        // AppleScript URL: "x-coredata://<uuid>/ICNote/p<PK>" does NOT embed
-        // ZIDENTIFIER. In that case we can't resolve here — caller must pass
-        // the raw UUID. We return the input unchanged so the SQLite lookup
-        // simply returns no row and we respond with {isShared: false}.
-        if raw.hasPrefix("x-coredata://") {
-            return raw  // Caller will get notShared response.
-        }
-        return raw
-    }
-
     private func handleGetShareMetadata(_ args: [String: Value]) throws -> String {
         let identifier = try requireString(args, "identifier")
+        // Reject the AppleScript URL form explicitly — ZICINVITATION.ZROOTOBJECT
+        // joins by ZIDENTIFIER (UUID), not the x-coredata://<store>/ICNote/p<PK>
+        // envelope used by write tools' `id` output. Silently returning
+        // {isShared:false} for a shared item would be a false negative; be loud.
+        if identifier.hasPrefix("x-coredata://") {
+            throw NotesServerError.invalidArgument(
+                "get_share_metadata requires the raw ZIDENTIFIER UUID (from the `uuid` field of list_notes/get_note output), not the AppleScript x-coredata:// URL"
+            )
+        }
         guard let sqlite else {
             throw NotesServerError.featureRequiresSQLite("get_share_metadata")
         }
-        let metadata = try sqlite.getShareMetadata(
-            identifier: extractZIdentifier(from: identifier)
-        )
+        let metadata = try sqlite.getShareMetadata(identifier: identifier)
         return jsonify(metadata.asDictionary())
     }
 

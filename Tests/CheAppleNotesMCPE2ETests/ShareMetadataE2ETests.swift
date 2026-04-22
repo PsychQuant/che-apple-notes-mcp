@@ -64,6 +64,40 @@ import Testing
         }
     }
 
+    @Test func getShareMetadataRejectsXCoreDataURL() async throws {
+        // Spec-negative: caller must pass the raw ZIDENTIFIER UUID. The
+        // AppleScript URL form (x-coredata://<store>/ICNote/p<PK>) is the
+        // output of list_notes.id / get_note.id but does not embed ZIDENTIFIER;
+        // the server must refuse loudly rather than silently return notShared.
+        try await withFixtureFolder { client, fixture in
+            _ = try await client.callTool(
+                name: "create_note",
+                arguments: #"{"title":"URLRejectCheck","body_text":"x","folder":"\#(fixture.name)"}"#
+            )
+            try await settleForNotesFlush()
+
+            // Fetch the x-coredata:// URL form (id, not uuid).
+            let list = try await client.callTool(
+                name: "list_notes",
+                arguments: #"{"folder_id":"\#(fixture.id)"}"#
+            )
+            struct Item: Decodable { let title: String; let id: String }
+            let items = try JSONDecoder().decode([Item].self, from: Data(list.text.utf8))
+            guard let target = items.first(where: { $0.title == "URLRejectCheck" }) else {
+                Issue.record("Fixture note not found")
+                return
+            }
+            #expect(target.id.hasPrefix("x-coredata://"))
+
+            let meta = try await client.callTool(
+                name: "get_share_metadata",
+                arguments: #"{"identifier":"\#(target.id)"}"#
+            )
+            #expect(meta.isError)
+            #expect(meta.text.contains("raw ZIDENTIFIER"))
+        }
+    }
+
     @Test func listNotesWithSharedFalseIncludesFixtureNote() async throws {
         try await withFixtureFolder { client, fixture in
             _ = try await client.callTool(
