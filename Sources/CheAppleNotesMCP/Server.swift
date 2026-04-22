@@ -384,7 +384,11 @@ final class CheAppleNotesMCPServer {
                 .filter { accountFilter == nil || $0.accountName == accountFilter }
             return jsonify(folders.map(folderToDict))
         }
-        // AppleScript fallback
+        // AppleScript fallback — refuse to silently drop the shared filter.
+        // The heuristic lives in SQLite; without FDA we cannot honor it.
+        if sharedOnly != nil {
+            throw NotesServerError.featureRequiresSQLite("list_folders shared filter")
+        }
         let rows = try applescript.listFolders()
             .filter { accountFilter == nil || $0.accountName == accountFilter }
         let dicts = rows.map { row -> [String: Any] in
@@ -455,6 +459,10 @@ final class CheAppleNotesMCPServer {
             return jsonify(notes.map(noteToDict))
         }
 
+        // AppleScript fallback — refuse to silently drop the shared filter.
+        if options.sharedOnly != nil {
+            throw NotesServerError.featureRequiresSQLite("list_notes shared filter")
+        }
         // AppleScript fallback (limited — needs folder name)
         let folder = args["folder"]?.stringValue ?? "Notes"
         let rows = try applescript.listNotesInFolder(
