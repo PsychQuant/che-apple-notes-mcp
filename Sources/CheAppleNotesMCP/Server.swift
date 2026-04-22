@@ -39,6 +39,26 @@ final class CheAppleNotesMCPServer {
         await registerHandlers()
     }
 
+    /// Test-only constructor — lets unit tests inject a nil or pre-built
+    /// `NotesStoreReader` so they can exercise the AppleScript-fallback and
+    /// `featureRequiresSQLite` error paths without touching the real Notes
+    /// store on disk. Not used by production (`main.swift` always calls `init()`).
+    ///
+    /// The `sqlite` parameter is applied verbatim — passing `nil` forces the
+    /// FDA-missing code path regardless of the host's real capabilities.
+    init(sqlite: NotesStoreReader?) async {
+        self.capabilities = Capabilities.detect()
+        self.sqlite = sqlite
+        self.tools = Self.defineTools()
+        self.server = Server(
+            name: AppVersion.name,
+            version: AppVersion.current,
+            capabilities: .init(tools: .init())
+        )
+        self.transport = StdioTransport()
+        await registerHandlers()
+    }
+
     func run() async throws {
         try await server.start(transport: transport)
         await server.waitUntilCompleted()
