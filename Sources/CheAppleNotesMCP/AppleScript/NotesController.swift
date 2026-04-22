@@ -193,4 +193,19 @@ final class NotesController {
             ids: ids, toFolderName: toFolderName, account: account
         ))
     }
+
+    // MARK: - Share workflow helpers (#4)
+
+    /// Activate Notes.app and trigger `File → Share Note...` so the user
+    /// can complete the share invitation manually. Throws on any step that
+    /// fails — caller maps the AppleScript error message to the tool's
+    /// JSON error response.
+    func prepareShareNote(id: String) throws {
+        _ = try runReturningString(NoteScriptBuilder.prepareShareNote(id: id))
+    }
+
+    /// Folder variant: activate Notes.app and trigger `File → Share Folder...`.
+    func prepareShareFolder(id: String) throws {
+        _ = try runReturningString(NoteScriptBuilder.prepareShareFolder(id: id))
+    }
 }
