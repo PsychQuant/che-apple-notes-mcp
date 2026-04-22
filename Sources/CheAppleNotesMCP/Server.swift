@@ -58,6 +58,10 @@ final class CheAppleNotesMCPServer {
                         "account": .object([
                             "type": .string("string"),
                             "description": .string("Optional account filter (e.g., 'iCloud', 'On My Mac')")
+                        ]),
+                        "shared": .object([
+                            "type": .string("boolean"),
+                            "description": .string("Filter by shared status. true: only shared folders. false: only unshared. Omit for no filter.")
                         ])
                     ])
                 ]),
@@ -120,7 +124,8 @@ final class CheAppleNotesMCPServer {
                         "modified_before": .object(["type": .string("string"), "description": .string("ISO 8601 date (modified on or before)")]),
                         "include_body": .object(["type": .string("boolean"), "description": .string("Include body_text + body_html. Default false (metadata only).")]),
                         "limit": .object(["type": .string("integer"), "description": .string("Max rows to return")]),
-                        "sort": .object(["type": .string("string"), "enum": .array([.string("asc"), .string("desc")]), "description": .string("Sort by modification date (default desc)")])
+                        "sort": .object(["type": .string("string"), "enum": .array([.string("asc"), .string("desc")]), "description": .string("Sort by modification date (default desc)")]),
+                        "shared": .object(["type": .string("boolean"), "description": .string("Filter by shared status. true: only shared notes. false: only unshared. Omit for no filter.")])
                     ])
                 ]),
                 annotations: .init(readOnlyHint: true, openWorldHint: false)
@@ -223,8 +228,23 @@ final class CheAppleNotesMCPServer {
                         "keyword": .object(["type": .string("string"), "description": .string("Single keyword")]),
                         "keywords": .object(["type": .string("array"), "description": .string("Multiple keywords")]),
                         "match_mode": .object(["type": .string("string"), "enum": .array([.string("any"), .string("all")]), "description": .string("any (OR) or all (AND). Default any.")]),
-                        "limit": .object(["type": .string("integer"), "description": .string("Max rows")])
+                        "limit": .object(["type": .string("integer"), "description": .string("Max rows")]),
+                        "shared": .object(["type": .string("boolean"), "description": .string("Filter by shared status. true: only shared notes. false: only unshared. Omit for no filter.")])
                     ])
+                ]),
+                annotations: .init(readOnlyHint: true, openWorldHint: false)
+            ),
+
+            // Share metadata
+            Tool(
+                name: "get_share_metadata",
+                description: "Read CloudKit share metadata for a note or folder from ZICINVITATION. Returns {isShared: false} when the item is not shared. Requires Full Disk Access (SQLite only — no AppleScript fallback per spec).",
+                inputSchema: .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "identifier": .object(["type": .string("string"), "description": .string("Note or folder ZIDENTIFIER (UUID form) — the raw identifier, not the AppleScript x-coredata:// URL")])
+                    ]),
+                    "required": .array([.string("identifier")])
                 ]),
                 annotations: .init(readOnlyHint: true, openWorldHint: false)
             ),
@@ -340,6 +360,7 @@ final class CheAppleNotesMCPServer {
         case "delete_note":        return try handleDeleteNote(arguments)
         case "move_note":          return try handleMoveNote(arguments)
         case "search_notes":       return try handleSearchNotes(arguments)
+        case "get_share_metadata": return try handleGetShareMetadata(arguments)
         case "create_notes_batch": return try handleCreateNotesBatch(arguments)
         case "move_notes_batch":   return try handleMoveNotesBatch(arguments)
         case "delete_notes_batch": return try handleDeleteNotesBatch(arguments)
@@ -355,13 +376,19 @@ final class CheAppleNotesMCPServer {
 
     private func handleListFolders(_ args: [String: Value]) throws -> String {
         let accountFilter = args["account"]?.stringValue
+        var sharedOnly: Bool? = nil
+        if case .bool(let b)? = args["shared"] { sharedOnly = b }
 
         if let sqlite {
-            let folders = try sqlite.listFolders()
+            let folders = try sqlite.listFolders(sharedOnly: sharedOnly)
                 .filter { accountFilter == nil || $0.accountName == accountFilter }
             return jsonify(folders.map(folderToDict))
         }
-        // AppleScript fallback
+        // AppleScript fallback — refuse to silently drop the shared filter.
+        // The heuristic lives in SQLite; without FDA we cannot honor it.
+        if sharedOnly != nil {
+            throw NotesServerError.featureRequiresSQLite("list_folders shared filter")
+        }
         let rows = try applescript.listFolders()
             .filter { accountFilter == nil || $0.accountName == accountFilter }
         let dicts = rows.map { row -> [String: Any] in
@@ -414,6 +441,7 @@ final class CheAppleNotesMCPServer {
         if case .int(let n)? = args["limit"] { options.limit = n }
         if case .bool(let b)? = args["include_body"] { options.includeBody = b }
         if args["sort"]?.stringValue == "asc" { options.sortDescending = false }
+        if case .bool(let b)? = args["shared"] { options.sharedOnly = b }
 
         // Name-based folder filter requires looking up id first.
         if let folderName = args["folder"]?.stringValue, options.folderIdentifier == nil {
@@ -431,6 +459,10 @@ final class CheAppleNotesMCPServer {
             return jsonify(notes.map(noteToDict))
         }
 
+        // AppleScript fallback — refuse to silently drop the shared filter.
+        if options.sharedOnly != nil {
+            throw NotesServerError.featureRequiresSQLite("list_notes shared filter")
+        }
         // AppleScript fallback (limited — needs folder name)
         let folder = args["folder"]?.stringValue ?? "Notes"
         let rows = try applescript.listNotesInFolder(
@@ -611,12 +643,39 @@ final class CheAppleNotesMCPServer {
         let matchAll = args["match_mode"]?.stringValue == "all"
         var limit: Int? = nil
         if case .int(let n)? = args["limit"] { limit = n }
+        var sharedOnly: Bool? = nil
+        if case .bool(let b)? = args["shared"] { sharedOnly = b }
 
         if let sqlite {
-            let results = try sqlite.searchNotes(keywords: keywords, matchAll: matchAll, limit: limit)
+            let results = try sqlite.searchNotes(
+                keywords: keywords,
+                matchAll: matchAll,
+                limit: limit,
+                sharedOnly: sharedOnly
+            )
             return jsonify(results.map(noteToDict))
         }
         throw NotesServerError.featureRequiresSQLite("search_notes")
+    }
+
+    // MARK: - Handlers: share metadata
+
+    private func handleGetShareMetadata(_ args: [String: Value]) throws -> String {
+        let identifier = try requireString(args, "identifier")
+        // Reject the AppleScript URL form explicitly — ZICINVITATION.ZROOTOBJECT
+        // joins by ZIDENTIFIER (UUID), not the x-coredata://<store>/ICNote/p<PK>
+        // envelope used by write tools' `id` output. Silently returning
+        // {isShared:false} for a shared item would be a false negative; be loud.
+        if identifier.hasPrefix("x-coredata://") {
+            throw NotesServerError.invalidArgument(
+                "get_share_metadata requires the raw ZIDENTIFIER UUID (from the `uuid` field of list_notes/get_note output), not the AppleScript x-coredata:// URL"
+            )
+        }
+        guard let sqlite else {
+            throw NotesServerError.featureRequiresSQLite("get_share_metadata")
+        }
+        let metadata = try sqlite.getShareMetadata(identifier: identifier)
+        return jsonify(metadata.asDictionary())
     }
 
     // MARK: - Handlers: batch

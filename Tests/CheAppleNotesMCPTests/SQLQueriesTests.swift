@@ -51,6 +51,39 @@ import Testing
         #expect(SQLQueries.listNotes.contains("AS shared"))
     }
 
+    @Test func shareMetadataByRootIdentifierQueriesICInvitation() {
+        // Phase 2 (#3): ZICINVITATION has the share metadata, joined via
+        // ZROOTOBJECT FK to the note/folder row in ZICCLOUDSYNCINGOBJECT.
+        #expect(SQLQueries.shareMetadataByRootIdentifier.contains("ZICINVITATION"))
+        #expect(SQLQueries.shareMetadataByRootIdentifier.contains(":rootIdentifier"))
+        #expect(SQLQueries.shareMetadataByRootIdentifier.contains("ZSHAREURL"))
+        #expect(SQLQueries.shareMetadataByRootIdentifier.contains("ZROOTOBJECTTYPE"))
+        #expect(SQLQueries.shareMetadataByRootIdentifier.contains("ZNOTECOUNT"))
+        #expect(SQLQueries.shareMetadataByRootIdentifier.contains("ZSUBFOLDERCOUNT"))
+        #expect(SQLQueries.shareMetadataByRootIdentifier.contains("ZRECEIVEDDATE"))
+        // Must report whether the CKShare BLOB is present without selecting its bytes.
+        #expect(SQLQueries.shareMetadataByRootIdentifier.contains("ZSERVERSHAREDATA IS NOT NULL"))
+        // Do not expose raw CKShare BLOB column in projection.
+        #expect(!SQLQueries.shareMetadataByRootIdentifier.contains("i.ZSERVERSHAREDATA,"))
+    }
+
+    @Test func sharedRootObjectHeuristicQueriesSingleRow() {
+        // Fallback for items without ZICINVITATION row but still marked shared
+        // via ZSERVERSHAREDATA / ZZONEOWNERNAME on the item row itself.
+        #expect(SQLQueries.sharedRootObjectHeuristic.contains(":rootIdentifier"))
+        #expect(SQLQueries.sharedRootObjectHeuristic.contains("ZSERVERSHAREDATA"))
+        #expect(SQLQueries.sharedRootObjectHeuristic.contains("ZZONEOWNERNAME"))
+    }
+
+    @Test func sharedRootObjectHeuristicProjectsServerShareDataPresent() {
+        // Regression guard for verify-3 BLOCKER: heuristic fallback must
+        // independently report whether ZSERVERSHAREDATA IS NOT NULL so the
+        // reader can populate ShareMetadata.serverShareDataPresent truthfully.
+        // Two columns: shared (aggregate heuristic) + server_share_data_present.
+        #expect(SQLQueries.sharedRootObjectHeuristic.contains("AS shared"))
+        #expect(SQLQueries.sharedRootObjectHeuristic.contains("AS server_share_data_present"))
+    }
+
     @Test func noteByIdentifierAppendsIdentifierFilterAndLimit() {
         #expect(SQLQueries.noteByIdentifier.hasPrefix(SQLQueries.listNotes))
         #expect(SQLQueries.noteByIdentifier.contains(":identifier"))

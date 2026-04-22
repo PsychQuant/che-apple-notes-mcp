@@ -93,13 +93,29 @@ final class NotesStoreReader {
 
     // MARK: - Folders
 
-    func listFolders() throws -> [Folder] {
+    /// List folders with an optional shared filter.
+    /// - Parameter sharedOnly: nil → all folders; true → only shared; false → only unshared.
+    func listFolders(sharedOnly: Bool? = nil) throws -> [Folder] {
         let folderEnt = try entityID(for: "ICFolder")
         let accountEnt = try entityID(for: "ICAccount")
+
+        var sql = SQLQueries.listFolders
+        if let sharedOnly {
+            // ORDER BY clause is last; insert filter before it.
+            let anchor = "ORDER BY COALESCE(f.ZSORTORDER"
+            let sharedPredicate = sharedOnly
+                ? "(f.ZSERVERSHAREDATA IS NOT NULL OR f.ZZONEOWNERNAME IS NOT NULL)"
+                : "(f.ZSERVERSHAREDATA IS NULL AND f.ZZONEOWNERNAME IS NULL)"
+            sql = sql.replacingOccurrences(
+                of: anchor,
+                with: "  AND \(sharedPredicate)\n        \(anchor)"
+            )
+        }
+
         var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, SQLQueries.listFolders, -1, &stmt, nil) == SQLITE_OK else {
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
             throw NotesSQLiteError.prepareFailed(
-                sql: SQLQueries.listFolders,
+                sql: sql,
                 message: String(cString: sqlite3_errmsg(db))
             )
         }
@@ -139,6 +155,9 @@ final class NotesStoreReader {
         var limit: Int? = nil
         var sortDescending: Bool = true  // newest first by default
         var includeBody: Bool = false
+        /// nil: no share filter. true: only shared items. false: only unshared.
+        /// Heuristic: `ZSERVERSHAREDATA IS NOT NULL OR ZZONEOWNERNAME IS NOT NULL`.
+        var sharedOnly: Bool? = nil
     }
 
     func listNotes(options: NoteListOptions = NoteListOptions()) throws -> [Note] {
@@ -178,6 +197,13 @@ final class NotesStoreReader {
         }
         if options.modifiedBefore != nil {
             extras.append("COALESCE(n.ZMODIFICATIONDATE1, n.ZMODIFICATIONDATE) <= :modifiedBefore")
+        }
+        if let sharedOnly = options.sharedOnly {
+            if sharedOnly {
+                extras.append("(n.ZSERVERSHAREDATA IS NOT NULL OR n.ZZONEOWNERNAME IS NOT NULL)")
+            } else {
+                extras.append("(n.ZSERVERSHAREDATA IS NULL AND n.ZZONEOWNERNAME IS NULL)")
+            }
         }
 
         if !extras.isEmpty {
@@ -262,9 +288,94 @@ final class NotesStoreReader {
         }
     }
 
+    // MARK: - Share metadata
+
+    /// Resolve share metadata for a note or folder by its `ZIDENTIFIER`.
+    ///
+    /// Two-stage lookup:
+    /// 1. Query `ZICINVITATION` joined to `ZICCLOUDSYNCINGOBJECT` via ZROOTOBJECT.
+    ///    If a row exists, return full metadata.
+    /// 2. Fall back to heuristic on the root item itself (ZSERVERSHAREDATA /
+    ///    ZZONEOWNERNAME). A hit yields `{isShared: true}` with other fields
+    ///    nil — the item is shared but lacks a dedicated invitation record.
+    /// 3. Neither hits → `ShareMetadata.notShared`.
+    func getShareMetadata(identifier: String) throws -> ShareMetadata {
+        if let fromInvitation = try shareMetadataFromInvitation(identifier: identifier) {
+            return fromInvitation
+        }
+        if let heuristic = try rootObjectSharedHeuristic(identifier: identifier), heuristic.shared {
+            return ShareMetadata(
+                isShared: true,
+                rootObjectType: nil,
+                title: nil,
+                snippet: nil,
+                shareURL: nil,
+                noteCount: nil,
+                subfolderCount: nil,
+                receivedDate: nil,
+                serverShareDataPresent: heuristic.serverShareDataPresent
+            )
+        }
+        return .notShared
+    }
+
+    private func shareMetadataFromInvitation(identifier: String) throws -> ShareMetadata? {
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, SQLQueries.shareMetadataByRootIdentifier, -1, &stmt, nil) == SQLITE_OK else {
+            throw NotesSQLiteError.prepareFailed(
+                sql: SQLQueries.shareMetadataByRootIdentifier,
+                message: String(cString: sqlite3_errmsg(db))
+            )
+        }
+        defer { sqlite3_finalize(stmt) }
+        try bind(stmt: stmt, name: ":rootIdentifier", value: identifier)
+
+        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+
+        return ShareMetadata(
+            isShared: true,
+            rootObjectType: columnText(stmt, 0),
+            title: columnText(stmt, 1),
+            snippet: columnText(stmt, 2),
+            shareURL: columnText(stmt, 3),
+            noteCount: columnIntOptional(stmt, 4),
+            subfolderCount: columnIntOptional(stmt, 5),
+            receivedDate: SQLQueries.coreDataDate(columnDoubleOptional(stmt, 6)),
+            serverShareDataPresent: sqlite3_column_int(stmt, 7) != 0
+        )
+    }
+
+    private struct HeuristicRow {
+        let shared: Bool
+        let serverShareDataPresent: Bool
+    }
+
+    private func rootObjectSharedHeuristic(identifier: String) throws -> HeuristicRow? {
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, SQLQueries.sharedRootObjectHeuristic, -1, &stmt, nil) == SQLITE_OK else {
+            throw NotesSQLiteError.prepareFailed(
+                sql: SQLQueries.sharedRootObjectHeuristic,
+                message: String(cString: sqlite3_errmsg(db))
+            )
+        }
+        defer { sqlite3_finalize(stmt) }
+        try bind(stmt: stmt, name: ":rootIdentifier", value: identifier)
+
+        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+        return HeuristicRow(
+            shared: sqlite3_column_int(stmt, 0) != 0,
+            serverShareDataPresent: sqlite3_column_int(stmt, 1) != 0
+        )
+    }
+
     // MARK: - Search
 
-    func searchNotes(keywords: [String], matchAll: Bool = false, limit: Int? = nil) throws -> [Note] {
+    func searchNotes(
+        keywords: [String],
+        matchAll: Bool = false,
+        limit: Int? = nil,
+        sharedOnly: Bool? = nil
+    ) throws -> [Note] {
         guard !keywords.isEmpty else { return [] }
 
         let noteEnt = try entityID(for: "ICNote")
@@ -276,7 +387,13 @@ final class NotesStoreReader {
             "(LOWER(COALESCE(n.ZTITLE1, n.ZTITLE, '')) LIKE :kw\(i) OR LOWER(COALESCE(n.ZSNIPPET, '')) LIKE :kw\(i))"
         }.joined(separator: joiner)
 
-        var sql = SQLQueries.listNotes + "\n  AND (\(conds))\nORDER BY modification_date DESC"
+        var sql = SQLQueries.listNotes + "\n  AND (\(conds))"
+        if let sharedOnly {
+            sql += sharedOnly
+                ? "\n  AND (n.ZSERVERSHAREDATA IS NOT NULL OR n.ZZONEOWNERNAME IS NOT NULL)"
+                : "\n  AND (n.ZSERVERSHAREDATA IS NULL AND n.ZZONEOWNERNAME IS NULL)"
+        }
+        sql += "\nORDER BY modification_date DESC"
         if let limit { sql += "\nLIMIT \(limit)" }
 
         var stmt: OpaquePointer?

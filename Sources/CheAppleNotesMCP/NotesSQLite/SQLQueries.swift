@@ -79,6 +79,47 @@ enum SQLQueries {
         LIMIT 1
         """
 
+    /// ZICINVITATION carries CloudKit share metadata for the root note/folder
+    /// it references via ZROOTOBJECT (FK to ZICCLOUDSYNCINGOBJECT.Z_PK).
+    ///
+    /// `server_share_data_present` is computed as a bool — we never select the
+    /// raw BLOB because spec forbids deserializing CKShare (`apple-notes-sharing-metadata`
+    /// requirement: tool SHALL NOT include a decoded representation of
+    /// ZSERVERSHAREDATA).
+    static let shareMetadataByRootIdentifier = """
+        SELECT
+            i.ZROOTOBJECTTYPE,
+            i.ZTITLE,
+            i.ZSNIPPET,
+            i.ZSHAREURL,
+            i.ZNOTECOUNT,
+            i.ZSUBFOLDERCOUNT,
+            i.ZRECEIVEDDATE,
+            (i.ZSERVERSHAREDATA IS NOT NULL) AS server_share_data_present
+        FROM ZICINVITATION i
+        JOIN ZICCLOUDSYNCINGOBJECT r
+            ON r.Z_PK = i.ZROOTOBJECT
+        WHERE r.ZIDENTIFIER = :rootIdentifier
+        LIMIT 1
+        """
+
+    /// Heuristic check for items without a ZICINVITATION row but still shared
+    /// via presence of ZSERVERSHAREDATA (owner) or ZZONEOWNERNAME (participant).
+    /// Used as fallback when `shareMetadataByRootIdentifier` returns no row.
+    ///
+    /// Projects two columns so the reader can populate
+    /// `ShareMetadata.serverShareDataPresent` truthfully even on this fallback
+    /// path — the aggregate `shared` bit is not enough because it conflates
+    /// owner and participant cases.
+    static let sharedRootObjectHeuristic = """
+        SELECT
+            (ZSERVERSHAREDATA IS NOT NULL OR ZZONEOWNERNAME IS NOT NULL) AS shared,
+            (ZSERVERSHAREDATA IS NOT NULL) AS server_share_data_present
+        FROM ZICCLOUDSYNCINGOBJECT
+        WHERE ZIDENTIFIER = :rootIdentifier
+        LIMIT 1
+        """
+
     /// Core Data stores timestamps as NSDate reference-date (2001-01-01).
     /// Caller converts via `Date(timeIntervalSinceReferenceDate:)`.
     static func coreDataDate(_ raw: Double?) -> Date? {
