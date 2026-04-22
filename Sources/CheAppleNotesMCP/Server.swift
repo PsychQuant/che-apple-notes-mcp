@@ -660,6 +660,24 @@ final class CheAppleNotesMCPServer {
 
     // MARK: - Handlers: share metadata
 
+    /// ## Error ordering rationale (#6 F8)
+    ///
+    /// When both conditions hold — caller passed `x-coredata://` URL AND
+    /// SQLite is unavailable — we throw `invalidArgument` (input validation),
+    /// not `featureRequiresSQLite` (FDA missing). A strict literal reading of
+    /// spec R4 ("Tool errors with clear message when SQLite unavailable")
+    /// would prefer the latter.
+    ///
+    /// We prefer `invalidArgument` because:
+    /// 1. The caller can act on "wrong identifier form" immediately; FDA is a
+    ///    one-time setup issue that's orthogonal to their current call.
+    /// 2. Surfacing the id-form error first is consistent with how most
+    ///    validation frameworks order checks (shape before permissions).
+    /// 3. Callers with correct FDA still hit the `invalidArgument` branch
+    ///    for x-coredata URLs, so the behavior is uniform.
+    ///
+    /// The spec's R4 scenario focuses on the simple case (raw UUID + no FDA),
+    /// which still fires `featureRequiresSQLite` correctly.
     private func handleGetShareMetadata(_ args: [String: Value]) throws -> String {
         let identifier = try requireString(args, "identifier")
         // Reject the AppleScript URL form explicitly — ZICINVITATION.ZROOTOBJECT
