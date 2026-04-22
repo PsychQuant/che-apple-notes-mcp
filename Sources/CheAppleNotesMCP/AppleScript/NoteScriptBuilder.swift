@@ -149,6 +149,85 @@ enum NoteScriptBuilder {
         """
     }
 
+    // MARK: - Share workflow helpers (#4)
+
+    /// Activate Notes.app, focus the target note, then trigger the
+    /// `File → Share Note...` menu item via System Events. The user finishes
+    /// the share (invitee, permission, Send) manually per spec — the tool
+    /// never auto-fills anything.
+    ///
+    /// The script layers three try/on-error blocks so each failure mode
+    /// surfaces with a distinct message matching the spec scenarios:
+    /// - Activate timeout → "Notes.app did not activate"
+    /// - `show note` fails → bubbles the AS error (likely unknown id)
+    /// - Menu item missing → "share menu unavailable"
+    static func prepareShareNote(id: String) -> String {
+        let idLit = AppleScriptEscape.quote(id)
+        return """
+        with timeout of 5 seconds
+            try
+                tell application "Notes" to activate
+            on error
+                error "Notes.app did not activate"
+            end try
+        end timeout
+        tell application "Notes"
+            show note id \(idLit)
+        end tell
+        tell application "System Events"
+            tell process "Notes"
+                try
+                    click menu item "Share Note..." of menu "File" of menu bar 1
+                on error
+                    try
+                        click menu item "Share Note…" of menu "File" of menu bar 1
+                    on error
+                        error "share menu unavailable"
+                    end try
+                end try
+            end tell
+        end tell
+        return "prepared"
+        """
+    }
+
+    /// Folder variant: activate Notes.app, show the folder, trigger
+    /// `File → Share Folder...`. Separate error messages let the caller
+    /// distinguish an invalid folder id from a missing menu item.
+    static func prepareShareFolder(id: String) -> String {
+        let idLit = AppleScriptEscape.quote(id)
+        return """
+        with timeout of 5 seconds
+            try
+                tell application "Notes" to activate
+            on error
+                error "Notes.app did not activate"
+            end try
+        end timeout
+        tell application "Notes"
+            try
+                show folder id \(idLit)
+            on error
+                error "folder not found"
+            end try
+        end tell
+        tell application "System Events"
+            tell process "Notes"
+                try
+                    click menu item "Share Folder..." of menu "File" of menu bar 1
+                on error
+                    try
+                        click menu item "Share Folder…" of menu "File" of menu bar 1
+                    on error
+                        error "share menu unavailable"
+                    end try
+                end try
+            end tell
+        end tell
+        return "prepared"
+        """
+    }
+
     static func getNoteBody(id: String) -> String {
         """
         tell application "Notes"
