@@ -16,6 +16,17 @@ import Testing
         #expect(SQLQueries.listAccounts.contains("ZNAME"))
     }
 
+    @Test func listFoldersIsComposableFromBaseAndOrderSuffix() {
+        // Hardening (#6 F6): eliminate the replacingOccurrences splice in
+        // listFolders(sharedOnly:) by exposing the query as base + order
+        // suffix. Base must be ORDER-BY-free; suffix must start with ORDER.
+        #expect(!SQLQueries.listFoldersBase.contains("ORDER BY"))
+        #expect(SQLQueries.listFoldersOrderSuffix.hasPrefix("ORDER BY"))
+        // Backwards-compat: existing listFolders constant equals base + suffix.
+        let expected = SQLQueries.listFoldersBase + "\n" + SQLQueries.listFoldersOrderSuffix
+        #expect(SQLQueries.listFolders == expected)
+    }
+
     @Test func listFoldersUsesFolderAndAccountEntityParams() {
         #expect(SQLQueries.listFolders.contains(":folderEntityID"))
         #expect(SQLQueries.listFolders.contains(":accountEntityID"))
@@ -73,6 +84,14 @@ import Testing
         #expect(SQLQueries.sharedRootObjectHeuristic.contains(":rootIdentifier"))
         #expect(SQLQueries.sharedRootObjectHeuristic.contains("ZSERVERSHAREDATA"))
         #expect(SQLQueries.sharedRootObjectHeuristic.contains("ZZONEOWNERNAME"))
+    }
+
+    @Test func sharedRootObjectHeuristicFiltersByEntityID() {
+        // Hardening (#6 F5): heuristic must only look at note/folder rows, not
+        // accounts or attachments. UUID collision across entity kinds is
+        // theoretical today but the LIMIT 1 query would silently pick a wrong
+        // row if one ever occurs.
+        #expect(SQLQueries.sharedRootObjectHeuristic.contains("Z_ENT IN (:noteEntityID, :folderEntityID)"))
     }
 
     @Test func sharedRootObjectHeuristicProjectsServerShareDataPresent() {

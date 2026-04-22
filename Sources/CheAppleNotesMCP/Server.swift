@@ -39,6 +39,26 @@ final class CheAppleNotesMCPServer {
         await registerHandlers()
     }
 
+    /// Test-only constructor — lets unit tests inject a nil or pre-built
+    /// `NotesStoreReader` so they can exercise the AppleScript-fallback and
+    /// `featureRequiresSQLite` error paths without touching the real Notes
+    /// store on disk. Not used by production (`main.swift` always calls `init()`).
+    ///
+    /// The `sqlite` parameter is applied verbatim — passing `nil` forces the
+    /// FDA-missing code path regardless of the host's real capabilities.
+    init(sqlite: NotesStoreReader?) async {
+        self.capabilities = Capabilities.detect()
+        self.sqlite = sqlite
+        self.tools = Self.defineTools()
+        self.server = Server(
+            name: AppVersion.name,
+            version: AppVersion.current,
+            capabilities: .init(tools: .init())
+        )
+        self.transport = StdioTransport()
+        await registerHandlers()
+    }
+
     func run() async throws {
         try await server.start(transport: transport)
         await server.waitUntilCompleted()
@@ -660,6 +680,24 @@ final class CheAppleNotesMCPServer {
 
     // MARK: - Handlers: share metadata
 
+    /// ## Error ordering rationale (#6 F8)
+    ///
+    /// When both conditions hold — caller passed `x-coredata://` URL AND
+    /// SQLite is unavailable — we throw `invalidArgument` (input validation),
+    /// not `featureRequiresSQLite` (FDA missing). A strict literal reading of
+    /// spec R4 ("Tool errors with clear message when SQLite unavailable")
+    /// would prefer the latter.
+    ///
+    /// We prefer `invalidArgument` because:
+    /// 1. The caller can act on "wrong identifier form" immediately; FDA is a
+    ///    one-time setup issue that's orthogonal to their current call.
+    /// 2. Surfacing the id-form error first is consistent with how most
+    ///    validation frameworks order checks (shape before permissions).
+    /// 3. Callers with correct FDA still hit the `invalidArgument` branch
+    ///    for x-coredata URLs, so the behavior is uniform.
+    ///
+    /// The spec's R4 scenario focuses on the simple case (raw UUID + no FDA),
+    /// which still fires `featureRequiresSQLite` correctly.
     private func handleGetShareMetadata(_ args: [String: Value]) throws -> String {
         let identifier = try requireString(args, "identifier")
         // Reject the AppleScript URL form explicitly — ZICINVITATION.ZROOTOBJECT

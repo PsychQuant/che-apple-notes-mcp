@@ -21,7 +21,12 @@ enum SQLQueries {
     /// direct boolean. `ZSERVERSHAREDATA IS NOT NULL` means the user owns a
     /// CloudKit share for this folder; `ZZONEOWNERNAME IS NOT NULL` means
     /// someone shared this folder with the user. Either signal is sufficient.
-    static let listFolders = """
+    ///
+    /// The query is exposed as `listFoldersBase` + `listFoldersOrderSuffix`
+    /// so the reader's shared-filter variant can splice an `AND` clause
+    /// before the ORDER BY without string-search fragility. `listFolders`
+    /// stays as a backwards-compatible full query for unfiltered callers.
+    static let listFoldersBase = """
         SELECT
             f.Z_PK,
             f.ZIDENTIFIER,
@@ -36,8 +41,13 @@ enum SQLQueries {
         LEFT JOIN ZICCLOUDSYNCINGOBJECT a
             ON a.Z_PK = f.ZOWNER AND a.Z_ENT = :accountEntityID
         WHERE f.Z_ENT = :folderEntityID
+        """
+
+    static let listFoldersOrderSuffix = """
         ORDER BY COALESCE(f.ZSORTORDER, 0), title
         """
+
+    static let listFolders = listFoldersBase + "\n" + listFoldersOrderSuffix
 
     /// List notes in a folder (or all) with basic metadata. Body is fetched
     /// separately via `noteBodyBlob` because it's expensive.
@@ -111,12 +121,17 @@ enum SQLQueries {
     /// `ShareMetadata.serverShareDataPresent` truthfully even on this fallback
     /// path — the aggregate `shared` bit is not enough because it conflates
     /// owner and participant cases.
+    ///
+    /// `Z_ENT IN (:noteEntityID, :folderEntityID)` guards against ZIDENTIFIER
+    /// collision with non-shareable entity kinds (accounts, attachments, etc).
+    /// Notes assigns globally-unique UUIDs today so this is defense in depth.
     static let sharedRootObjectHeuristic = """
         SELECT
             (ZSERVERSHAREDATA IS NOT NULL OR ZZONEOWNERNAME IS NOT NULL) AS shared,
             (ZSERVERSHAREDATA IS NOT NULL) AS server_share_data_present
         FROM ZICCLOUDSYNCINGOBJECT
         WHERE ZIDENTIFIER = :rootIdentifier
+          AND Z_ENT IN (:noteEntityID, :folderEntityID)
         LIMIT 1
         """
 

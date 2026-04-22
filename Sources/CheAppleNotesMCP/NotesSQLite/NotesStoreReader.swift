@@ -99,18 +99,18 @@ final class NotesStoreReader {
         let folderEnt = try entityID(for: "ICFolder")
         let accountEnt = try entityID(for: "ICAccount")
 
-        var sql = SQLQueries.listFolders
+        // Compose from base + order suffix so we can splice a filter predicate
+        // between them without relying on a string-search anchor. If
+        // SQLQueries.listFolders ever drifts from this composition, the
+        // listFoldersIsComposableFromBaseAndOrderSuffix test catches it.
+        var sql = SQLQueries.listFoldersBase
         if let sharedOnly {
-            // ORDER BY clause is last; insert filter before it.
-            let anchor = "ORDER BY COALESCE(f.ZSORTORDER"
             let sharedPredicate = sharedOnly
                 ? "(f.ZSERVERSHAREDATA IS NOT NULL OR f.ZZONEOWNERNAME IS NOT NULL)"
                 : "(f.ZSERVERSHAREDATA IS NULL AND f.ZZONEOWNERNAME IS NULL)"
-            sql = sql.replacingOccurrences(
-                of: anchor,
-                with: "  AND \(sharedPredicate)\n        \(anchor)"
-            )
+            sql += "\n  AND \(sharedPredicate)"
         }
+        sql += "\n" + SQLQueries.listFoldersOrderSuffix
 
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
@@ -351,6 +351,9 @@ final class NotesStoreReader {
     }
 
     private func rootObjectSharedHeuristic(identifier: String) throws -> HeuristicRow? {
+        let noteEnt = try entityID(for: "ICNote")
+        let folderEnt = try entityID(for: "ICFolder")
+
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, SQLQueries.sharedRootObjectHeuristic, -1, &stmt, nil) == SQLITE_OK else {
             throw NotesSQLiteError.prepareFailed(
@@ -360,6 +363,8 @@ final class NotesStoreReader {
         }
         defer { sqlite3_finalize(stmt) }
         try bind(stmt: stmt, name: ":rootIdentifier", value: identifier)
+        try bind(stmt: stmt, name: ":noteEntityID", value: Int64(noteEnt))
+        try bind(stmt: stmt, name: ":folderEntityID", value: Int64(folderEnt))
 
         guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
         return HeuristicRow(
