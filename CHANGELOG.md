@@ -5,6 +5,40 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-04-22
+
+### Added (Apple Notes Sharing, fully spec-driven)
+
+- **6 new tools** for CloudKit share visibility + creation assistance:
+  - `get_share_metadata` — reads ZICINVITATION row (shareURL, invitation counts, receivedDate, serverShareDataPresent) without deserializing the CKShare BLOB
+  - `prepare_share_note` / `prepare_share_folder` — activate Notes.app, focus target, trigger `File → Share Note...` / `Share Folder...` menu so the user completes invitations manually (spec forbids auto-fill)
+  - `list_folders` / `list_notes` / `search_notes` accept an optional `shared: bool?` filter
+- **Read tools emit `shared: Bool`** on every folder and note (derived from AppleScript `shared` property + SQLite heuristic on `ZSERVERSHAREDATA` / `ZZONEOWNERNAME`)
+- New capabilities `apple-notes-sharing-metadata` + `apple-notes-sharing-workflow` in `openspec/specs/`
+
+### Changed
+
+- `NotesStoreReader.getShareMetadata` uses a two-stage lookup: `ZICINVITATION` row (if exists) → heuristic fallback (`ZSERVERSHAREDATA IS NOT NULL OR ZZONEOWNERNAME IS NOT NULL`).
+- `SQLQueries.listFolders` split into `listFoldersBase` + `listFoldersOrderSuffix` so the shared filter inserts predicates via composition instead of a fragile `replacingOccurrences` anchor search.
+- `sharedRootObjectHeuristic` SQL now filters by `Z_ENT IN (:noteEntityID, :folderEntityID)` to defend against theoretical UUID collision across entity kinds.
+- `handleGetShareMetadata` rejects AppleScript-URL-form identifiers (`x-coredata://…`) loudly with a `invalidArgument` error pointing callers at the raw `uuid` field, instead of silently returning `{isShared: false}`.
+- AppleScript fallback path for `list_folders` / `list_notes` now throws `featureRequiresSQLite("…shared filter")` when the `shared` param is set but FDA is unavailable; previously dropped the filter silently.
+- `deleteFolderRemovesAnEmptyFolder` E2E assertion switched from raw-string `contains` to `JSONDecoder` (the server uses prettyPrinted output, so `"deleted":true` never matched — regression since v0.1.0).
+
+### Explicitly NOT Implemented (spec SHALL NOT)
+
+- `create_share_link`, `invite_participant`, `revoke_share`, `list_participants` — Notes.app's CloudKit container is private; no public API path exists. The workflow-helper pair is the intended escape valve.
+
+### Tests
+
+- **112 unit tests** (up from 86 at v0.1.0) including new `NotesStoreReaderTests` (4 integration tests against temp SQLite fixtures) and `ServerHandlerTests` (5 handler error-path tests via a new `init(sqlite:)` test seam).
+- **11 E2E tests** (up from 7), adding `ShareMetadataE2ETests`.
+
+### Known Limits (carried from v0.1.0)
+
+- Locked notes: body decode skipped (AES-encrypted)
+- Pin/unpin writes: AppleScript limitation
+
 ## [0.1.0] - 2026-04-21
 
 ### Added

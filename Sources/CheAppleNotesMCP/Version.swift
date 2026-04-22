@@ -2,7 +2,7 @@ import Foundation
 
 /// Centralized version management
 enum AppVersion {
-    static let current = "0.1.0"
+    static let current = "0.2.0"
     static let name = "CheAppleNotesMCP"
     static let displayName = "macOS Apple Notes MCP Server"
 
