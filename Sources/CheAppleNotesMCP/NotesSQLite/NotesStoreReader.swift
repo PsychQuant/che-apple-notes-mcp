@@ -351,6 +351,9 @@ final class NotesStoreReader {
     }
 
     private func rootObjectSharedHeuristic(identifier: String) throws -> HeuristicRow? {
+        let noteEnt = try entityID(for: "ICNote")
+        let folderEnt = try entityID(for: "ICFolder")
+
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, SQLQueries.sharedRootObjectHeuristic, -1, &stmt, nil) == SQLITE_OK else {
             throw NotesSQLiteError.prepareFailed(
@@ -360,6 +363,8 @@ final class NotesStoreReader {
         }
         defer { sqlite3_finalize(stmt) }
         try bind(stmt: stmt, name: ":rootIdentifier", value: identifier)
+        try bind(stmt: stmt, name: ":noteEntityID", value: Int64(noteEnt))
+        try bind(stmt: stmt, name: ":folderEntityID", value: Int64(folderEnt))
 
         guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
         return HeuristicRow(

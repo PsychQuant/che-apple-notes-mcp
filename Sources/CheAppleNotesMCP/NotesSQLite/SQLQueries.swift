@@ -111,12 +111,17 @@ enum SQLQueries {
     /// `ShareMetadata.serverShareDataPresent` truthfully even on this fallback
     /// path — the aggregate `shared` bit is not enough because it conflates
     /// owner and participant cases.
+    ///
+    /// `Z_ENT IN (:noteEntityID, :folderEntityID)` guards against ZIDENTIFIER
+    /// collision with non-shareable entity kinds (accounts, attachments, etc).
+    /// Notes assigns globally-unique UUIDs today so this is defense in depth.
     static let sharedRootObjectHeuristic = """
         SELECT
             (ZSERVERSHAREDATA IS NOT NULL OR ZZONEOWNERNAME IS NOT NULL) AS shared,
             (ZSERVERSHAREDATA IS NOT NULL) AS server_share_data_present
         FROM ZICCLOUDSYNCINGOBJECT
         WHERE ZIDENTIFIER = :rootIdentifier
+          AND Z_ENT IN (:noteEntityID, :folderEntityID)
         LIMIT 1
         """
 

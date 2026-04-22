@@ -75,6 +75,14 @@ import Testing
         #expect(SQLQueries.sharedRootObjectHeuristic.contains("ZZONEOWNERNAME"))
     }
 
+    @Test func sharedRootObjectHeuristicFiltersByEntityID() {
+        // Hardening (#6 F5): heuristic must only look at note/folder rows, not
+        // accounts or attachments. UUID collision across entity kinds is
+        // theoretical today but the LIMIT 1 query would silently pick a wrong
+        // row if one ever occurs.
+        #expect(SQLQueries.sharedRootObjectHeuristic.contains("Z_ENT IN (:noteEntityID, :folderEntityID)"))
+    }
+
     @Test func sharedRootObjectHeuristicProjectsServerShareDataPresent() {
         // Regression guard for verify-3 BLOCKER: heuristic fallback must
         // independently report whether ZSERVERSHAREDATA IS NOT NULL so the
