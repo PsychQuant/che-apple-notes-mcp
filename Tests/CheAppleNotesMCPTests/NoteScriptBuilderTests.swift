@@ -136,6 +136,38 @@ import Testing
         #expect(s.contains("move note id \"b\" to folder \"Archive\" of account \"On My Mac\""))
     }
 
+    // MARK: - Share workflow helpers (#4)
+
+    @Test func prepareShareNoteActivatesAndOpensShareMenu() {
+        let s = NoteScriptBuilder.prepareShareNote(id: "x-coredata://abc/ICNote/p1")
+        // Step 1: activate Notes under a bounded timeout so we can report
+        // "Notes.app did not activate" if it never comes forward.
+        #expect(s.contains("with timeout of"))
+        #expect(s.contains("activate"))
+        // Step 2: focus the note so the Share menu item targets the right one.
+        #expect(s.contains("show note id \"x-coredata://abc/ICNote/p1\""))
+        // Step 3: System Events triggers File → Share Note... menu item.
+        #expect(s.contains("tell application \"System Events\""))
+        #expect(s.contains("tell process \"Notes\""))
+        #expect(s.contains("Share Note"))
+        // Spec scenarios require specific error strings on failure.
+        #expect(s.contains("share menu unavailable"))
+        #expect(s.contains("Notes.app did not activate"))
+    }
+
+    @Test func prepareShareFolderActivatesAndOpensShareMenu() {
+        let s = NoteScriptBuilder.prepareShareFolder(id: "x-coredata://abc/ICFolder/p9")
+        #expect(s.contains("with timeout of"))
+        #expect(s.contains("activate"))
+        // Folder variant uses `show folder id` + Share Folder... menu item.
+        #expect(s.contains("show folder id \"x-coredata://abc/ICFolder/p9\""))
+        #expect(s.contains("Share Folder"))
+        // Folder-specific error per spec.
+        #expect(s.contains("folder not found"))
+        #expect(s.contains("share menu unavailable"))
+        #expect(s.contains("Notes.app did not activate"))
+    }
+
     @Test func specialCharactersInTitleAreQuotedSafely() {
         let s = NoteScriptBuilder.createNote(title: "say \"hi\"", bodyHTML: "", folderName: nil, account: nil)
         #expect(s.contains("\"say \\\"hi\\\"\""))

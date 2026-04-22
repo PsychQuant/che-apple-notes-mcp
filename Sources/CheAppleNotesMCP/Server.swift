@@ -255,6 +255,32 @@ final class CheAppleNotesMCPServer {
                 annotations: .init(readOnlyHint: true, openWorldHint: false)
             ),
 
+            // Share workflow (#4 Phase 3)
+            Tool(
+                name: "prepare_share_note",
+                description: "Activate Notes.app, show the specified note, and open the File → Share Note... menu so the user can complete the invitation manually. This tool DOES NOT auto-fill invitees, select permissions, or send — those steps are the user's responsibility. Returns {prepared: true, id}.",
+                inputSchema: .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "id": .object(["type": .string("string"), "description": .string("Note id (x-coredata://... URL form from list_notes/get_note output)")])
+                    ]),
+                    "required": .array([.string("id")])
+                ]),
+                annotations: .init(readOnlyHint: false, destructiveHint: false, openWorldHint: true)
+            ),
+            Tool(
+                name: "prepare_share_folder",
+                description: "Folder variant of prepare_share_note: activate Notes.app, show the folder, and open the File → Share Folder... menu. User completes the invitation manually. Returns {prepared: true, id}.",
+                inputSchema: .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "id": .object(["type": .string("string"), "description": .string("Folder id (x-coredata://... URL form)")])
+                    ]),
+                    "required": .array([.string("id")])
+                ]),
+                annotations: .init(readOnlyHint: false, destructiveHint: false, openWorldHint: true)
+            ),
+
             // Share metadata
             Tool(
                 name: "get_share_metadata",
@@ -381,6 +407,8 @@ final class CheAppleNotesMCPServer {
         case "move_note":          return try handleMoveNote(arguments)
         case "search_notes":       return try handleSearchNotes(arguments)
         case "get_share_metadata": return try handleGetShareMetadata(arguments)
+        case "prepare_share_note": return try handlePrepareShareNote(arguments)
+        case "prepare_share_folder": return try handlePrepareShareFolder(arguments)
         case "create_notes_batch": return try handleCreateNotesBatch(arguments)
         case "move_notes_batch":   return try handleMoveNotesBatch(arguments)
         case "delete_notes_batch": return try handleDeleteNotesBatch(arguments)
@@ -714,6 +742,20 @@ final class CheAppleNotesMCPServer {
         }
         let metadata = try sqlite.getShareMetadata(identifier: identifier)
         return jsonify(metadata.asDictionary())
+    }
+
+    // MARK: - Handlers: share workflow (#4)
+
+    private func handlePrepareShareNote(_ args: [String: Value]) throws -> String {
+        let id = try requireString(args, "id")
+        try applescript.prepareShareNote(id: id)
+        return jsonify(["prepared": true, "id": id] as [String: Any])
+    }
+
+    private func handlePrepareShareFolder(_ args: [String: Value]) throws -> String {
+        let id = try requireString(args, "id")
+        try applescript.prepareShareFolder(id: id)
+        return jsonify(["prepared": true, "id": id] as [String: Any])
     }
 
     // MARK: - Handlers: batch
