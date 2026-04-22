@@ -303,7 +303,7 @@ final class NotesStoreReader {
         if let fromInvitation = try shareMetadataFromInvitation(identifier: identifier) {
             return fromInvitation
         }
-        if try isRootObjectSharedByHeuristic(identifier: identifier) {
+        if let heuristic = try rootObjectSharedHeuristic(identifier: identifier), heuristic.shared {
             return ShareMetadata(
                 isShared: true,
                 rootObjectType: nil,
@@ -313,7 +313,7 @@ final class NotesStoreReader {
                 noteCount: nil,
                 subfolderCount: nil,
                 receivedDate: nil,
-                serverShareDataPresent: false
+                serverShareDataPresent: heuristic.serverShareDataPresent
             )
         }
         return .notShared
@@ -345,7 +345,12 @@ final class NotesStoreReader {
         )
     }
 
-    private func isRootObjectSharedByHeuristic(identifier: String) throws -> Bool {
+    private struct HeuristicRow {
+        let shared: Bool
+        let serverShareDataPresent: Bool
+    }
+
+    private func rootObjectSharedHeuristic(identifier: String) throws -> HeuristicRow? {
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, SQLQueries.sharedRootObjectHeuristic, -1, &stmt, nil) == SQLITE_OK else {
             throw NotesSQLiteError.prepareFailed(
@@ -356,8 +361,11 @@ final class NotesStoreReader {
         defer { sqlite3_finalize(stmt) }
         try bind(stmt: stmt, name: ":rootIdentifier", value: identifier)
 
-        guard sqlite3_step(stmt) == SQLITE_ROW else { return false }
-        return sqlite3_column_int(stmt, 0) != 0
+        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+        return HeuristicRow(
+            shared: sqlite3_column_int(stmt, 0) != 0,
+            serverShareDataPresent: sqlite3_column_int(stmt, 1) != 0
+        )
     }
 
     // MARK: - Search

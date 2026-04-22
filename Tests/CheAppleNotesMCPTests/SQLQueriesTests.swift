@@ -75,6 +75,15 @@ import Testing
         #expect(SQLQueries.sharedRootObjectHeuristic.contains("ZZONEOWNERNAME"))
     }
 
+    @Test func sharedRootObjectHeuristicProjectsServerShareDataPresent() {
+        // Regression guard for verify-3 BLOCKER: heuristic fallback must
+        // independently report whether ZSERVERSHAREDATA IS NOT NULL so the
+        // reader can populate ShareMetadata.serverShareDataPresent truthfully.
+        // Two columns: shared (aggregate heuristic) + server_share_data_present.
+        #expect(SQLQueries.sharedRootObjectHeuristic.contains("AS shared"))
+        #expect(SQLQueries.sharedRootObjectHeuristic.contains("AS server_share_data_present"))
+    }
+
     @Test func noteByIdentifierAppendsIdentifierFilterAndLimit() {
         #expect(SQLQueries.noteByIdentifier.hasPrefix(SQLQueries.listNotes))
         #expect(SQLQueries.noteByIdentifier.contains(":identifier"))

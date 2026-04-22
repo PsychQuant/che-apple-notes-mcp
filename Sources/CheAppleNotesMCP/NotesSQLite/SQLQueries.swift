@@ -106,9 +106,15 @@ enum SQLQueries {
     /// Heuristic check for items without a ZICINVITATION row but still shared
     /// via presence of ZSERVERSHAREDATA (owner) or ZZONEOWNERNAME (participant).
     /// Used as fallback when `shareMetadataByRootIdentifier` returns no row.
+    ///
+    /// Projects two columns so the reader can populate
+    /// `ShareMetadata.serverShareDataPresent` truthfully even on this fallback
+    /// path — the aggregate `shared` bit is not enough because it conflates
+    /// owner and participant cases.
     static let sharedRootObjectHeuristic = """
         SELECT
-            (ZSERVERSHAREDATA IS NOT NULL OR ZZONEOWNERNAME IS NOT NULL) AS shared
+            (ZSERVERSHAREDATA IS NOT NULL OR ZZONEOWNERNAME IS NOT NULL) AS shared,
+            (ZSERVERSHAREDATA IS NOT NULL) AS server_share_data_present
         FROM ZICCLOUDSYNCINGOBJECT
         WHERE ZIDENTIFIER = :rootIdentifier
         LIMIT 1
