@@ -16,6 +16,17 @@ import Testing
         #expect(SQLQueries.listAccounts.contains("ZNAME"))
     }
 
+    @Test func listFoldersIsComposableFromBaseAndOrderSuffix() {
+        // Hardening (#6 F6): eliminate the replacingOccurrences splice in
+        // listFolders(sharedOnly:) by exposing the query as base + order
+        // suffix. Base must be ORDER-BY-free; suffix must start with ORDER.
+        #expect(!SQLQueries.listFoldersBase.contains("ORDER BY"))
+        #expect(SQLQueries.listFoldersOrderSuffix.hasPrefix("ORDER BY"))
+        // Backwards-compat: existing listFolders constant equals base + suffix.
+        let expected = SQLQueries.listFoldersBase + "\n" + SQLQueries.listFoldersOrderSuffix
+        #expect(SQLQueries.listFolders == expected)
+    }
+
     @Test func listFoldersUsesFolderAndAccountEntityParams() {
         #expect(SQLQueries.listFolders.contains(":folderEntityID"))
         #expect(SQLQueries.listFolders.contains(":accountEntityID"))
