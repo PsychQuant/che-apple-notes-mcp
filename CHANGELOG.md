@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-06-12
+
+### Added (Apple Notes Tags, read-only)
+
+- **2 new tools** for hashtag visibility (capability `apple-notes-tags`, spec in `openspec/changes/add-tag-support/specs/`):
+  - `list_tags` — every hashtag (`ICHashtag` entity) with live-note counts, merged across accounts (per-tag `accounts` array), orphan tags included with `note_count: 0`, sorted by count desc then name asc
+  - `get_notes_by_tag` — notes carrying the given tag(s); `match: any|all`, leading `#` optional, case-insensitive exact match, composable with folder/account/limit/include_body; response carries a `warnings` array naming input tags that match no known hashtag (typo guard) — unknown tags are not an error
+- **`tags` filter on `list_notes`** (`tags: [String]` + `match: any|all`), composable with all existing filters; `get_notes_by_tag` rides the same reader query path
+- **`tags: [String]` field on every SQLite note read** (`get_note`, `list_notes`, `list_notes_quick`, `search_notes`) — literal in-note form (e.g. `"#Deal-Flow"`), deduplicated case-insensitively per note, sorted alphabetically; resolved via a single grouped query over hashtag inline attachments (no N+1). AppleScript-fallback reads return `tags: null`, never `[]` — null means "unknowable", `[]` means "verifiably none"
+- New SQL: hashtag entity / inline-attachment queries filter strictly on `ZTYPEUTI* = 'com.apple.notes.inlinetextattachment.hashtag'` (mentions and links excluded) and exclude `ZMARKEDFORDELETION` rows on both the attachment and the joined note
+
+### Changed
+
+- Schema-drift handling extended to tag columns: note FK `COALESCE(ZNOTE1, ZNOTE)`, UTI `COALESCE(ZTYPEUTI1, ZTYPEUTI)`, hashtag account FK `COALESCE(ZACCOUNT3, ZACCOUNT2, ZACCOUNT1, ZACCOUNT)` (ZACCOUNT3 verified live on macOS 26). `ICHashtag` / `ICInlineAttachment` entity IDs resolved at runtime from `Z_PRIMARYKEY` like all other entities — no hardcoded `Z_ENT` values
+- Tag enrichment on note reads is best-effort: a schema without hashtag entities leaves `tags: null` without failing the read; the dedicated tag tools fail loudly (`entityNotFound`) instead
+- Without Full Disk Access, `list_tags` / `get_notes_by_tag` / `list_notes` with a `tags` filter throw `featureRequiresSQLite` — no silent degradation to text search
+- `ToolCoverageE2ETests.expectedToolNames` brought back in sync with the server (was missing the three v0.2.0 sharing tools)
+
+### Explicitly NOT Implemented (spec SHALL NOT)
+
+- Tag creation / rename / delete — tags live in the note body protobuf as styled inline attachments; AppleScript cannot create them (programmatic `#text` does not activate) and direct SQLite writes would corrupt CloudKit sync
+- Smart Folder predicate evaluation (`ZSMARTFOLDERQUERYJSON`) — possible follow-up
+- Prefix / fuzzy tag matching — v1 is exact match only
+
+### Tests
+
+- **129 unit tests** (up from 112): new `TagSupportTests` (14 tests against a temp SQLite fixture with hashtag entities, duplicate occurrences, a mention attachment that must be excluded, a deleted note carrying a tag, the same tag across two accounts, and missing-entity schemas) + 2 handler error-path tests in `ServerHandlerTests`
+- **5 new E2E tests** (`TagToolsE2ETests`): 3 shape tests always run; 2 content tests gate behind `CHE_MCP_TAG_E2E_TAG=<tag>` pointing at a manually pre-seeded tagged note (tags cannot be created programmatically) and are visibly skipped otherwise
+
 ## [0.2.0] - 2026-04-22
 
 ### Added (Apple Notes Sharing, fully spec-driven)

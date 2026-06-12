@@ -145,7 +145,9 @@ final class CheAppleNotesMCPServer {
                         "include_body": .object(["type": .string("boolean"), "description": .string("Include body_text + body_html. Default false (metadata only).")]),
                         "limit": .object(["type": .string("integer"), "description": .string("Max rows to return")]),
                         "sort": .object(["type": .string("string"), "enum": .array([.string("asc"), .string("desc")]), "description": .string("Sort by modification date (default desc)")]),
-                        "shared": .object(["type": .string("boolean"), "description": .string("Filter by shared status. true: only shared notes. false: only unshared. Omit for no filter.")])
+                        "shared": .object(["type": .string("boolean"), "description": .string("Filter by shared status. true: only shared notes. false: only unshared. Omit for no filter.")]),
+                        "tags": .object(["type": .string("array"), "description": .string("Filter by hashtag(s), with or without leading '#' (e.g. [\"deal-flow\"]). Case-insensitive exact match. Requires Full Disk Access.")]),
+                        "match": .object(["type": .string("string"), "enum": .array([.string("any"), .string("all")]), "description": .string("Tag match mode: any (default) = at least one tag; all = every tag.")])
                     ])
                 ]),
                 annotations: .init(readOnlyHint: true, openWorldHint: false)
@@ -251,6 +253,38 @@ final class CheAppleNotesMCPServer {
                         "limit": .object(["type": .string("integer"), "description": .string("Max rows")]),
                         "shared": .object(["type": .string("boolean"), "description": .string("Filter by shared status. true: only shared notes. false: only unshared. Omit for no filter.")])
                     ])
+                ]),
+                annotations: .init(readOnlyHint: true, openWorldHint: false)
+            ),
+
+            // Tags (read-only — tags live in the note body protobuf; neither
+            // AppleScript nor safe SQLite writes can create or modify them)
+            Tool(
+                name: "list_tags",
+                description: "List all Apple Notes hashtags (#tags) with live-note counts, aggregated across accounts (per-tag accounts array). Orphan tags with zero notes are included. Read-only — tags cannot be created, renamed, or deleted via this server. Requires Full Disk Access (SQLite only; tags are invisible to AppleScript).",
+                inputSchema: .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "account": .object(["type": .string("string"), "description": .string("Optional account filter (e.g., 'iCloud', 'On My Mac')")])
+                    ])
+                ]),
+                annotations: .init(readOnlyHint: true, openWorldHint: false)
+            ),
+            Tool(
+                name: "get_notes_by_tag",
+                description: "Return notes carrying the given hashtag(s). Accepts tags with or without leading '#'; matching is case-insensitive and exact (no prefix/fuzzy). match='any' (default) = at least one tag, 'all' = every tag. Composable with folder/account filters. Response includes a warnings array naming input tags that match no known tag. Requires Full Disk Access (SQLite only).",
+                inputSchema: .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "tags": .object(["type": .string("array"), "description": .string("Tag names, with or without leading '#' (e.g. [\"deal-flow\", \"citrus\"])")]),
+                        "match": .object(["type": .string("string"), "enum": .array([.string("any"), .string("all")]), "description": .string("any (default): note carries at least one tag. all: note carries every tag.")]),
+                        "account": .object(["type": .string("string"), "description": .string("Account name filter")]),
+                        "folder": .object(["type": .string("string"), "description": .string("Folder name to filter by")]),
+                        "folder_id": .object(["type": .string("string"), "description": .string("Folder id (exact match)")]),
+                        "limit": .object(["type": .string("integer"), "description": .string("Max rows to return")]),
+                        "include_body": .object(["type": .string("boolean"), "description": .string("Include body_text + body_html. Default false (metadata only).")])
+                    ]),
+                    "required": .array([.string("tags")])
                 ]),
                 annotations: .init(readOnlyHint: true, openWorldHint: false)
             ),
@@ -406,6 +440,8 @@ final class CheAppleNotesMCPServer {
         case "delete_note":        return try handleDeleteNote(arguments)
         case "move_note":          return try handleMoveNote(arguments)
         case "search_notes":       return try handleSearchNotes(arguments)
+        case "list_tags":          return try handleListTags(arguments)
+        case "get_notes_by_tag":   return try handleGetNotesByTag(arguments)
         case "get_share_metadata": return try handleGetShareMetadata(arguments)
         case "prepare_share_note": return try handlePrepareShareNote(arguments)
         case "prepare_share_folder": return try handlePrepareShareFolder(arguments)
@@ -490,6 +526,11 @@ final class CheAppleNotesMCPServer {
         if case .bool(let b)? = args["include_body"] { options.includeBody = b }
         if args["sort"]?.stringValue == "asc" { options.sortDescending = false }
         if case .bool(let b)? = args["shared"] { options.sharedOnly = b }
+        let tagFilters = parseTagsArgument(args)
+        if !tagFilters.isEmpty {
+            options.tags = tagFilters
+            options.tagsMatchAll = args["match"]?.stringValue == "all"
+        }
 
         // Name-based folder filter requires looking up id first.
         if let folderName = args["folder"]?.stringValue, options.folderIdentifier == nil {
@@ -511,6 +552,10 @@ final class CheAppleNotesMCPServer {
         if options.sharedOnly != nil {
             throw NotesServerError.featureRequiresSQLite("list_notes shared filter")
         }
+        // Same for tags: the hashtag data only exists in SQLite.
+        if options.tags != nil {
+            throw NotesServerError.featureRequiresSQLite("list_notes tags filter")
+        }
         // AppleScript fallback (limited — needs folder name)
         let folder = args["folder"]?.stringValue ?? "Notes"
         let rows = try applescript.listNotesInFolder(
@@ -524,6 +569,9 @@ final class CheAppleNotesMCPServer {
                 "creation_date": row.creationDate,
                 "modification_date": row.modificationDate,
                 "shared": row.shared,
+                // null, not [] — tags are unknowable without SQLite and an
+                // empty array would falsely assert "no tags".
+                "tags": NSNull(),
                 "source": "applescript"
             ]
         })
@@ -584,6 +632,8 @@ final class CheAppleNotesMCPServer {
             "created_at": full.creationDate,
             "modified_at": full.modificationDate,
             "shared": full.shared,
+            // null, not [] — tags are invisible to AppleScript.
+            "tags": NSNull(),
             "source": "applescript"
         ] as [String: Any])
     }
@@ -704,6 +754,73 @@ final class CheAppleNotesMCPServer {
             return jsonify(results.map(noteToDict))
         }
         throw NotesServerError.featureRequiresSQLite("search_notes")
+    }
+
+    // MARK: - Handlers: tags
+
+    private func handleListTags(_ args: [String: Value]) throws -> String {
+        guard let sqlite else {
+            throw NotesServerError.featureRequiresSQLite("list_tags")
+        }
+        let account = args["account"]?.stringValue
+        let tags = try sqlite.listTags(accountName: account)
+        let dicts = tags.map { t -> [String: Any] in
+            [
+                "name": t.name,
+                "standardized": t.standardized,
+                "note_count": t.noteCount,
+                "accounts": t.accounts
+            ]
+        }
+        return jsonify(["tags": dicts, "total": tags.count] as [String: Any])
+    }
+
+    private func handleGetNotesByTag(_ args: [String: Value]) throws -> String {
+        guard let sqlite else {
+            throw NotesServerError.featureRequiresSQLite("get_notes_by_tag")
+        }
+        let tagInputs = parseTagsArgument(args)
+        guard !tagInputs.isEmpty else {
+            throw NotesServerError.invalidArgument("provide 'tags' (array of tag names, with or without leading '#')")
+        }
+
+        var options = NotesStoreReader.NoteListOptions()
+        options.tags = tagInputs
+        options.tagsMatchAll = args["match"]?.stringValue == "all"
+        options.accountName = args["account"]?.stringValue
+        options.folderIdentifier = args["folder_id"]?.stringValue
+        if case .int(let n)? = args["limit"] { options.limit = n }
+        if case .bool(let b)? = args["include_body"] { options.includeBody = b }
+
+        // Name-based folder filter, same lookup as handleListNotes.
+        if let folderName = args["folder"]?.stringValue, options.folderIdentifier == nil {
+            let match = try sqlite.listFolders().first {
+                $0.title == folderName
+                    && (options.accountName == nil || $0.accountName == options.accountName)
+            }
+            if let match { options.folderIdentifier = match.identifier }
+        }
+
+        let notes = try sqlite.listNotes(options: options)
+        // Unknown tag names are not an error — they match nothing. Surface
+        // them so callers can catch typos instead of trusting an empty result.
+        let warnings = try sqlite.unknownTags(tagInputs).map { "unknown tag: \($0)" }
+        return jsonify([
+            "notes": notes.map(noteToDict),
+            "warnings": warnings,
+            "total": notes.count
+        ] as [String: Any])
+    }
+
+    /// `tags` argument: array of strings, or a single string for convenience.
+    private func parseTagsArgument(_ args: [String: Value]) -> [String] {
+        if case .array(let arr)? = args["tags"] {
+            return arr.compactMap { $0.stringValue }.filter { !$0.isEmpty }
+        }
+        if case .string(let s)? = args["tags"], !s.isEmpty {
+            return [s]
+        }
+        return []
     }
 
     // MARK: - Handlers: share metadata
@@ -884,6 +1001,14 @@ final class CheAppleNotesMCPServer {
             "snippet": n.snippet ?? "",
             "shared": n.shared,
         ]
+        // Array when SQLite resolved tags (possibly empty = "no tags"); null
+        // when tags were unknowable (AppleScript source or a schema without
+        // hashtag entities).
+        if let tags = n.tags {
+            dict["tags"] = tags
+        } else {
+            dict["tags"] = NSNull()
+        }
         if let d = n.creationDate {
             dict["created_at"] = iso8601.string(from: d)
         }

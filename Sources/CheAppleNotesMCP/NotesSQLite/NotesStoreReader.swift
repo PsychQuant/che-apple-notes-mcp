@@ -158,6 +158,15 @@ final class NotesStoreReader {
         /// nil: no share filter. true: only shared items. false: only unshared.
         /// Heuristic: `ZSERVERSHAREDATA IS NOT NULL OR ZZONEOWNERNAME IS NOT NULL`.
         var sharedOnly: Bool? = nil
+        /// Tag filter. Inputs accepted with or without leading '#'; matched
+        /// case-insensitively against the standardized tag token. nil/empty:
+        /// no tag filter. Requires the ICInlineAttachment entity — throws
+        /// entityNotFound on schemas without it rather than silently ignoring
+        /// the filter.
+        var tags: [String]? = nil
+        /// false (default): note must carry at least one of `tags`.
+        /// true: note must carry every tag in `tags`.
+        var tagsMatchAll: Bool = false
     }
 
     func listNotes(options: NoteListOptions = NoteListOptions()) throws -> [Note] {
@@ -206,6 +215,23 @@ final class NotesStoreReader {
             }
         }
 
+        // Tag filter. Entity resolution happens here (not at the top) so
+        // schemas without ICInlineAttachment only fail when a tag filter is
+        // actually requested — plain listNotes keeps working.
+        var tagTokens: [String] = []
+        if let tags = options.tags, !tags.isEmpty {
+            _ = try entityID(for: "ICInlineAttachment")
+            tagTokens = tags.map { Self.normalizeTagInput($0) }
+            if options.tagsMatchAll {
+                for i in tagTokens.indices {
+                    extras.append(SQLQueries.tagFilterSubquery(tokenParams: [":tagTok\(i)"]))
+                }
+            } else {
+                let params = tagTokens.indices.map { ":tagTok\($0)" }
+                extras.append(SQLQueries.tagFilterSubquery(tokenParams: params))
+            }
+        }
+
         if !extras.isEmpty {
             sql += "\n  AND " + extras.joined(separator: "\n  AND ")
         }
@@ -246,6 +272,14 @@ final class NotesStoreReader {
         if let d = options.modifiedBefore {
             try bind(stmt: stmt, name: ":modifiedBefore", value: d.timeIntervalSinceReferenceDate)
         }
+        if !tagTokens.isEmpty {
+            try bind(stmt: stmt, name: ":inlineAttachmentEntityID",
+                     value: Int64(try entityID(for: "ICInlineAttachment")))
+            try bind(stmt: stmt, name: ":hashtagUTI", value: SQLQueries.hashtagUTI)
+            for (i, token) in tagTokens.enumerated() {
+                try bind(stmt: stmt, name: ":tagTok\(i)", value: token)
+            }
+        }
 
         var notes: [Note] = []
         while sqlite3_step(stmt) == SQLITE_ROW {
@@ -272,6 +306,7 @@ final class NotesStoreReader {
             }
             notes.append(note)
         }
+        attachTags(to: &notes)
         return notes
     }
 
@@ -437,7 +472,167 @@ final class NotesStoreReader {
                 bodyHTML: nil
             ))
         }
+        attachTags(to: &results)
         return results
+    }
+
+    // MARK: - Tags
+
+    /// Strip the leading '#' and surrounding whitespace from user-supplied tag
+    /// input. The only normalization v1 performs — matching is then
+    /// case-insensitive against ZSTANDARDIZEDCONTENT / ZTOKENCONTENTIDENTIFIER.
+    static func normalizeTagInput(_ raw: String) -> String {
+        var s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if s.hasPrefix("#") { s.removeFirst() }
+        return s
+    }
+
+    /// Enumerate tags across accounts (or one account), with live-note counts.
+    /// Tags present in several accounts are merged by standardized content and
+    /// report the union of account names; counts sum across the merged rows
+    /// (a note belongs to exactly one account, so the sum stays distinct).
+    func listTags(accountName: String? = nil) throws -> [TagSummary] {
+        let hashtagEnt = try entityID(for: "ICHashtag")
+        let attachmentEnt = try entityID(for: "ICInlineAttachment")
+        let noteEnt = try entityID(for: "ICNote")
+        let folderEnt = try entityID(for: "ICFolder")
+        let accountEnt = try entityID(for: "ICAccount")
+
+        // Pass 1: hashtag entities — source of truth for tag names. Orphan
+        // tags (zero live notes) appear here and nowhere else.
+        var tagSQL = SQLQueries.listHashtags
+        if accountName != nil { tagSQL += "\n  AND a.ZNAME = :accountName" }
+
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, tagSQL, -1, &stmt, nil) == SQLITE_OK else {
+            throw NotesSQLiteError.prepareFailed(sql: tagSQL, message: String(cString: sqlite3_errmsg(db)))
+        }
+        try bind(stmt: stmt, name: ":hashtagEntityID", value: Int64(hashtagEnt))
+        try bind(stmt: stmt, name: ":accountEntityID", value: Int64(accountEnt))
+        if let accountName { try bind(stmt: stmt, name: ":accountName", value: accountName) }
+
+        struct Agg {
+            var display: String
+            var standardized: String
+            var accounts: Set<String> = []
+        }
+        var aggs: [String: Agg] = [:]  // keyed by uppercased token
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            guard let token = columnText(stmt, 2) else { continue }
+            let display = columnText(stmt, 0) ?? token.lowercased()
+            let standardized = columnText(stmt, 1) ?? token
+            var agg = aggs[token] ?? Agg(display: display, standardized: standardized)
+            if let account = columnText(stmt, 3) { agg.accounts.insert(account) }
+            aggs[token] = agg
+        }
+        sqlite3_finalize(stmt)
+
+        // Pass 2: live-note counts grouped by token.
+        var countSQL = SQLQueries.tagNoteCountsBase
+        if accountName != nil { countSQL += "\n  AND a.ZNAME = :accountName" }
+        countSQL += "\n" + SQLQueries.tagNoteCountsGroupSuffix
+
+        stmt = nil
+        guard sqlite3_prepare_v2(db, countSQL, -1, &stmt, nil) == SQLITE_OK else {
+            throw NotesSQLiteError.prepareFailed(sql: countSQL, message: String(cString: sqlite3_errmsg(db)))
+        }
+        defer { sqlite3_finalize(stmt) }
+        try bind(stmt: stmt, name: ":inlineAttachmentEntityID", value: Int64(attachmentEnt))
+        try bind(stmt: stmt, name: ":noteEntityID", value: Int64(noteEnt))
+        try bind(stmt: stmt, name: ":folderEntityID", value: Int64(folderEnt))
+        try bind(stmt: stmt, name: ":accountEntityID", value: Int64(accountEnt))
+        try bind(stmt: stmt, name: ":hashtagUTI", value: SQLQueries.hashtagUTI)
+        if let accountName { try bind(stmt: stmt, name: ":accountName", value: accountName) }
+
+        var counts: [String: Int] = [:]
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            guard let token = columnText(stmt, 0) else { continue }
+            counts[token, default: 0] += Int(sqlite3_column_int(stmt, 1))
+        }
+
+        return aggs
+            .map { token, agg in
+                TagSummary(
+                    name: "#" + agg.display,
+                    standardized: agg.standardized.lowercased(),
+                    noteCount: counts[token] ?? 0,
+                    accounts: agg.accounts.sorted()
+                )
+            }
+            .sorted {
+                if $0.noteCount != $1.noteCount { return $0.noteCount > $1.noteCount }
+                return $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+            }
+    }
+
+    /// Subset of `inputs` (raw user form, leading '#' optional) matching no
+    /// hashtag entity — feeds get_notes_by_tag's warnings array so typos
+    /// don't silently return zero notes.
+    func unknownTags(_ inputs: [String]) throws -> [String] {
+        guard !inputs.isEmpty else { return [] }
+        let hashtagEnt = try entityID(for: "ICHashtag")
+
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, SQLQueries.knownTagStandardizedContents, -1, &stmt, nil) == SQLITE_OK else {
+            throw NotesSQLiteError.prepareFailed(
+                sql: SQLQueries.knownTagStandardizedContents,
+                message: String(cString: sqlite3_errmsg(db))
+            )
+        }
+        defer { sqlite3_finalize(stmt) }
+        try bind(stmt: stmt, name: ":hashtagEntityID", value: Int64(hashtagEnt))
+
+        var known: Set<String> = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            if let s = columnText(stmt, 0) { known.insert(s.uppercased()) }
+        }
+        return inputs.filter { !known.contains(Self.normalizeTagInput($0).uppercased()) }
+    }
+
+    /// Best-effort tag enrichment for note reads: one pass over hashtag
+    /// attachments grouped by note PK, no per-note round trips. Failure (e.g.
+    /// ICInlineAttachment absent on an older schema) leaves `tags` nil on
+    /// every note instead of failing the read — only the dedicated tag tools
+    /// treat a missing entity as an error.
+    private func attachTags(to notes: inout [Note]) {
+        guard !notes.isEmpty else { return }
+        guard let tagMap = try? hashtagOccurrencesByNotePK() else { return }
+        for i in notes.indices {
+            notes[i].tags = tagMap[notes[i].pk] ?? []
+        }
+    }
+
+    /// All hashtag occurrences grouped by owning note PK, deduplicated per
+    /// note by token (one note can repeat the same tag) and sorted
+    /// alphabetically. Values are the literal in-note form from ZALTTEXT
+    /// (e.g. "#Deal-Flow"), falling back to "#" + lowercased token.
+    private func hashtagOccurrencesByNotePK() throws -> [Int64: [String]] {
+        let attachmentEnt = try entityID(for: "ICInlineAttachment")
+
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, SQLQueries.noteHashtagOccurrences, -1, &stmt, nil) == SQLITE_OK else {
+            throw NotesSQLiteError.prepareFailed(
+                sql: SQLQueries.noteHashtagOccurrences,
+                message: String(cString: sqlite3_errmsg(db))
+            )
+        }
+        defer { sqlite3_finalize(stmt) }
+        try bind(stmt: stmt, name: ":inlineAttachmentEntityID", value: Int64(attachmentEnt))
+        try bind(stmt: stmt, name: ":hashtagUTI", value: SQLQueries.hashtagUTI)
+
+        var seen: [Int64: Set<String>] = [:]   // note PK → tokens already taken
+        var grouped: [Int64: [String]] = [:]
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            let notePK = sqlite3_column_int64(stmt, 0)
+            guard let token = columnText(stmt, 2) else { continue }
+            guard seen[notePK, default: []].insert(token).inserted else { continue }
+            let alt = columnText(stmt, 1) ?? "#" + token.lowercased()
+            grouped[notePK, default: []].append(alt.hasPrefix("#") ? alt : "#" + alt)
+        }
+        for pk in grouped.keys {
+            grouped[pk]?.sort { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+        }
+        return grouped
     }
 
     // MARK: - Body blob
