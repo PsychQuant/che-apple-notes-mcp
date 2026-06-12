@@ -63,6 +63,28 @@ struct Note {
     /// attempt decode) or when protobuf decode failed. Callers may fall back to
     /// AppleScript for body.
     var bodyDecodeError: Bool = false
+
+    /// Hashtags carried by this note in literal in-note form (e.g. "#Deal-Flow"),
+    /// deduplicated case-insensitively and sorted alphabetically. nil means tags
+    /// could not be resolved (AppleScript source, or a schema without hashtag
+    /// entities) — callers must surface null, never [], so "unknown" is
+    /// distinguishable from "no tags".
+    var tags: [String]? = nil
+}
+
+/// One distinct tag as shown by the Notes.app Tag Browser, aggregated across
+/// accounts (the DB stores `#x` in iCloud and `#x` in On My Mac as separate
+/// ICHashtag rows; `list_tags` merges them by standardized content).
+struct TagSummary {
+    /// Display form with leading '#' (ZDISPLAYTEXT stores it without one).
+    let name: String
+    /// Lowercased ZSTANDARDIZEDCONTENT — the matching key for tag filters.
+    let standardized: String
+    /// Count of live (non-deleted) notes carrying this tag, across the
+    /// queried accounts. Orphan tags report 0.
+    let noteCount: Int
+    /// Account names where this tag exists, sorted.
+    let accounts: [String]
 }
 
 struct Attachment {

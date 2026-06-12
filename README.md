@@ -1,12 +1,12 @@
 # che-apple-notes-mcp
 
-macOS Apple Notes.app MCP Server — **SQLite fast read + AppleScript safe write**, 24 tools (folders, notes CRUD, search, batch, sharing visibility, undo/redo).
+macOS Apple Notes.app MCP Server — **SQLite fast read + AppleScript safe write**, 26 tools (folders, notes CRUD, search, tags, batch, sharing visibility, undo/redo).
 
 ## Architecture
 
 | Path | Backend | Operations |
 |------|---------|-----------|
-| Read | `NoteStore.sqlite` (Core Data, direct) | `list_folders`, `list_notes`, `list_notes_quick`, `get_note`, `search_notes`, `get_share_metadata` |
+| Read | `NoteStore.sqlite` (Core Data, direct) | `list_folders`, `list_notes`, `list_notes_quick`, `get_note`, `search_notes`, `list_tags`, `get_notes_by_tag`, `get_share_metadata` |
 | Write | AppleScript via `NSAppleScript` | `create_note`, `update_note`, `delete_note`, `move_note`, `*_folder`, `*_batch` |
 | Workflow | AppleScript UI automation | `prepare_share_note`, `prepare_share_folder` (activate Notes.app → open native Share sheet) |
 
@@ -93,7 +93,7 @@ Optionally, grant **Full Disk Access** to `~/bin/CheAppleNotesMCP` in System Set
 
 ### CLI Mode (No MCP Server)
 
-All 24 tools can be invoked directly from the command line without running the MCP server:
+All 26 tools can be invoked directly from the command line without running the MCP server:
 
 ```bash
 # Flag-based: --key value pairs
@@ -111,7 +111,7 @@ Useful for launchd jobs, shell scripts, CI pipelines, and agents that prefer sub
 
 ---
 
-## All 24 Tools
+## All 26 Tools
 
 <details>
 <summary><b>Folders (4)</b></summary>
@@ -129,7 +129,7 @@ Useful for launchd jobs, shell scripts, CI pipelines, and agents that prefer sub
 
 | Tool | Description |
 |------|-------------|
-| `list_notes` | List notes with filters (folder, account, pinned, locked, date range, shared). |
+| `list_notes` | List notes with filters (folder, account, pinned, locked, date range, shared, tags + `match: any\|all` — v0.3.0). |
 | `list_notes_quick` | Preset ranges: `recent`, `today`, `this_week`, `pinned` |
 | `get_note` | Fetch a single note with full body (text + HTML) and metadata |
 | `create_note` | Create a note (body_text XOR body_html), optional folder + account |
@@ -144,6 +144,19 @@ Useful for launchd jobs, shell scripts, CI pipelines, and agents that prefer sub
 | Tool | Description |
 |------|-------------|
 | `search_notes` | SQL LIKE keyword search over title + snippet; `any` or `all` match mode. Supports `shared: bool?` filter (v0.2.0). |
+</details>
+
+<details>
+<summary><b>Tags (2 — new in v0.3.0)</b></summary>
+
+| Tool | Description |
+|------|-------------|
+| `list_tags` | All hashtags with live-note counts, merged across accounts (per-tag `accounts` array). Orphan tags included with `note_count: 0`. Sorted by count desc, name asc. |
+| `get_notes_by_tag` | Notes carrying the given tag(s); `match: any\|all`, leading `#` optional, case-insensitive exact match. Composes with folder/account/limit/include_body. Returns `{notes, warnings, total}` — `warnings` names input tags that match nothing (typo guard). |
+
+Every SQLite-path note read (`get_note`, `list_notes`, `list_notes_quick`, `search_notes`, `get_notes_by_tag`) also carries `tags: [String]` — literal in-note form, deduplicated, alphabetical. AppleScript-fallback reads return `tags: null` (unknown), never `[]` (verified none).
+
+**Read-only**: tags cannot be created, renamed, or deleted — see Known Limits.
 </details>
 
 <details>
@@ -215,8 +228,9 @@ Output returns **both** `body_text` and `body_html` for reads with `include_body
 
 Without Full Disk Access:
 - `list_folders`, `list_notes`, `get_note` fall back to AppleScript (same result, 50–500× slower)
-- `list_notes_quick`, `search_notes`, `get_share_metadata` error out (they require SQLite)
+- `list_notes_quick`, `search_notes`, `get_share_metadata`, `list_tags`, `get_notes_by_tag` error out (they require SQLite)
 - `list_folders` / `list_notes` / `search_notes` with `shared: true|false` throw `featureRequiresSQLite` — AppleScript fallback cannot honor the filter
+- `list_notes` with a `tags` filter throws `featureRequiresSQLite` for the same reason; AppleScript-path reads return `tags: null`
 
 ## Same-Name Folder Disambiguation
 
@@ -241,7 +255,9 @@ Available account names typically include `iCloud`, `On My Mac`, plus any config
 - **Body HTML from SQLite**: approximates via longest-UTF-8-string scan. If you need full HTML fidelity, use AppleScript path (requires reading via a tool that bypasses SQLite).
 - **1 MB body cap** per note.
 - **CloudKit share creation / invitation / revocation**: explicitly NOT implemented — Notes.app's CKContainer is private. Use `prepare_share_note` / `prepare_share_folder` to open the native Share sheet; the user completes invitations manually.
-- Tested on **macOS 13/14/15**; protobuf schema may drift on future macOS.
+- **Tag creation / rename / delete**: not possible — Apple stores tags in the note body protobuf as styled inline attachments; AppleScript cannot write them (programmatically inserted `#text` does not activate as a tag), and writing SQLite directly would corrupt CloudKit sync. Tag tools are strictly read-only.
+- **Smart Folders**: not evaluated — `list_tags` / `get_notes_by_tag` read raw tag data; Smart Folder predicates (`ZSMARTFOLDERQUERYJSON`) are out of scope.
+- Tested on **macOS 13/14/15** (tag schema verified on macOS 26); protobuf schema may drift on future macOS.
 
 ## Testing
 
@@ -280,12 +296,13 @@ See [CHANGELOG.md](CHANGELOG.md) for full release notes.
 
 | Version | Changes |
 |---------|---------|
+| v0.3.0 | Tag support (read-only): `list_tags`, `get_notes_by_tag`, `tags` field on every SQLite note read, `tags` + `match` filter on `list_notes`. Spec: `openspec/changes/add-tag-support/specs/apple-notes-tags/`. 129 unit tests. |
 | v0.2.0 | 6 new sharing tools (`get_share_metadata`, `prepare_share_note`, `prepare_share_folder`, + `shared` filter on `list_folders` / `list_notes` / `search_notes`). `shared: Bool` now on every read. Spec-driven via `openspec/specs/apple-notes-sharing-{metadata,workflow}/`. 112 unit + 11 E2E tests. |
 | v0.1.0 | Initial release — 18 tools, dual-track architecture, dual-track body, FDA fallback, undo/redo, batch ops |
 
 ## Technical Details
 
-- **Current Version**: v0.2.0
+- **Current Version**: v0.3.0
 - **macOS**: 13.0 or later
 - **Swift**: 6.0+ toolchain (executable target pinned to Swift 5 language mode; test targets use Swift Testing)
 - **MCP SDK**: modelcontextprotocol/swift-sdk 0.12.x

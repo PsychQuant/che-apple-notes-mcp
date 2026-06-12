@@ -115,4 +115,47 @@ import MCP
             #expect(error.errorDescription?.contains(fdaRequiredSubstring) == true)
         }
     }
+
+    // MARK: - Tag tools (apple-notes-tags)
+
+    @Test func tagToolsThrowFeatureRequiresSQLiteWhenSqliteUnavailable() async throws {
+        // Spec: tag data only exists in SQLite — without FDA the tag tools
+        // SHALL error loudly, never degrade to text search.
+        let server = await CheAppleNotesMCPServer(sqlite: nil)
+        let cases: [(tool: String, args: [String: Value], feature: String)] = [
+            ("list_tags", [:], "list_tags"),
+            ("get_notes_by_tag", ["tags": .array([.string("deal-flow")])], "get_notes_by_tag"),
+            ("list_notes", ["tags": .array([.string("deal-flow")])], "list_notes tags filter"),
+        ]
+        for c in cases {
+            do {
+                _ = try await server.executeToolCall(name: c.tool, arguments: c.args)
+                Issue.record("expected featureRequiresSQLite throw for \(c.tool) but got success")
+            } catch let error as NotesServerError {
+                guard case .featureRequiresSQLite(let feature) = error else {
+                    Issue.record("expected featureRequiresSQLite for \(c.tool) but got \(error)")
+                    continue
+                }
+                #expect(feature == c.feature)
+                #expect(error.errorDescription?.contains(fdaRequiredSubstring) == true)
+            }
+        }
+    }
+
+    @Test func getNotesByTagRequiresTagsArgument() async throws {
+        // Argument validation fires before the FDA check would matter for a
+        // caller that has SQLite: shape errors must name the missing field.
+        let server = await CheAppleNotesMCPServer(sqlite: nil)
+        do {
+            _ = try await server.executeToolCall(name: "get_notes_by_tag", arguments: [:])
+            Issue.record("expected an error for missing tags but got success")
+        } catch let error as NotesServerError {
+            // With sqlite nil the FDA guard fires first; both are acceptable
+            // here — what matters is that the call never silently succeeds.
+            switch error {
+            case .featureRequiresSQLite, .invalidArgument: break
+            default: Issue.record("unexpected error for missing tags: \(error)")
+            }
+        }
+    }
 }

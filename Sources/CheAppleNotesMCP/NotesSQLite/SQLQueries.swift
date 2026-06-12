@@ -135,6 +135,113 @@ enum SQLQueries {
         LIMIT 1
         """
 
+    // MARK: - Tags (apple-notes-tags)
+
+    /// UTI that marks an inline attachment row as a hashtag occurrence. Other
+    /// inline attachment types exist (mentions, note links) and must never be
+    /// treated as tags.
+    static let hashtagUTI = "com.apple.notes.inlinetextattachment.hashtag"
+
+    /// Normalized tag token expression for an inline-attachment row with the
+    /// given alias. `ZTOKENCONTENTIDENTIFIER` matches the hashtag entity's
+    /// `ZSTANDARDIZEDCONTENT`; `LTRIM(ZALTTEXT, '#')` is the fallback when the
+    /// token column is unpopulated. `UPPER()` folds the casing drift between
+    /// macOS versions (standardized content is uppercase on macOS 26 but has
+    /// been reported lowercase elsewhere).
+    static func tagToken(_ alias: String) -> String {
+        "UPPER(COALESCE(\(alias).ZTOKENCONTENTIDENTIFIER, LTRIM(\(alias).ZALTTEXT, '#')))"
+    }
+
+    /// Hashtag entities — the Tag Browser's source of truth, one row per
+    /// distinct tag per account. Orphan tags (zero live notes) still have a
+    /// row here. The account FK column drifts across model versions, hence
+    /// the COALESCE chain (ZACCOUNT3 on macOS 26).
+    ///
+    /// Composable: the reader appends `AND a.ZNAME = :accountName` when an
+    /// account filter is requested. No trailing ORDER BY for that reason —
+    /// sorting happens in Swift after cross-account aggregation.
+    static let listHashtags = """
+        SELECT
+            h.ZDISPLAYTEXT,
+            h.ZSTANDARDIZEDCONTENT,
+            UPPER(h.ZSTANDARDIZEDCONTENT) AS token,
+            a.ZNAME AS account_name
+        FROM ZICCLOUDSYNCINGOBJECT h
+        LEFT JOIN ZICCLOUDSYNCINGOBJECT a
+            ON a.Z_PK = COALESCE(h.ZACCOUNT3, h.ZACCOUNT2, h.ZACCOUNT1, h.ZACCOUNT) AND a.Z_ENT = :accountEntityID
+        WHERE h.Z_ENT = :hashtagEntityID
+          AND (h.ZMARKEDFORDELETION IS NULL OR h.ZMARKEDFORDELETION = 0)
+        """
+
+    /// Live-note counts per tag token per account. Inner join to the owning
+    /// note filters deleted notes (and dangling attachment rows) out of the
+    /// counts; DISTINCT collapses repeated occurrences of the same tag inside
+    /// one note.
+    ///
+    /// Split base + suffix so the reader can splice `AND a.ZNAME = :accountName`
+    /// before GROUP BY, mirroring the listFolders composition pattern.
+    static let tagNoteCountsBase = """
+        SELECT
+            \(tagToken("t")) AS token,
+            COUNT(DISTINCT n.Z_PK) AS note_count
+        FROM ZICCLOUDSYNCINGOBJECT t
+        JOIN ZICCLOUDSYNCINGOBJECT n
+            ON n.Z_PK = COALESCE(t.ZNOTE1, t.ZNOTE)
+           AND n.Z_ENT = :noteEntityID
+           AND (n.ZMARKEDFORDELETION IS NULL OR n.ZMARKEDFORDELETION = 0)
+        LEFT JOIN ZICCLOUDSYNCINGOBJECT f
+            ON f.Z_PK = n.ZFOLDER AND f.Z_ENT = :folderEntityID
+        LEFT JOIN ZICCLOUDSYNCINGOBJECT a
+            ON a.Z_PK = f.ZOWNER AND a.Z_ENT = :accountEntityID
+        WHERE t.Z_ENT = :inlineAttachmentEntityID
+          AND COALESCE(t.ZTYPEUTI1, t.ZTYPEUTI) = :hashtagUTI
+          AND (t.ZMARKEDFORDELETION IS NULL OR t.ZMARKEDFORDELETION = 0)
+        """
+
+    static let tagNoteCountsGroupSuffix = """
+        GROUP BY token
+        """
+
+    /// Every hashtag occurrence with its owning note PK — fetched in one pass
+    /// and grouped in Swift to enrich note reads with a `tags` array without
+    /// an N+1 per-note lookup. ZALTTEXT is the literal in-note text ("#tag").
+    static let noteHashtagOccurrences = """
+        SELECT
+            COALESCE(t.ZNOTE1, t.ZNOTE) AS note_pk,
+            t.ZALTTEXT,
+            \(tagToken("t")) AS token
+        FROM ZICCLOUDSYNCINGOBJECT t
+        WHERE t.Z_ENT = :inlineAttachmentEntityID
+          AND COALESCE(t.ZTYPEUTI1, t.ZTYPEUTI) = :hashtagUTI
+          AND (t.ZMARKEDFORDELETION IS NULL OR t.ZMARKEDFORDELETION = 0)
+          AND COALESCE(t.ZNOTE1, t.ZNOTE) IS NOT NULL
+        """
+
+    /// All distinct standardized tag contents — compared in Swift against
+    /// user input to produce get_notes_by_tag's zero-match warnings.
+    static let knownTagStandardizedContents = """
+        SELECT DISTINCT ZSTANDARDIZEDCONTENT
+        FROM ZICCLOUDSYNCINGOBJECT
+        WHERE Z_ENT = :hashtagEntityID
+          AND ZSTANDARDIZEDCONTENT IS NOT NULL
+          AND (ZMARKEDFORDELETION IS NULL OR ZMARKEDFORDELETION = 0)
+        """
+
+    /// Membership predicate for the notes query: note carries at least one of
+    /// the tags bound to the given named parameters. Caller passes one
+    /// parameter for "any-of" semantics across several tags, or calls once
+    /// per tag (AND-ed) for "all" semantics.
+    static func tagFilterSubquery(tokenParams: [String]) -> String {
+        let list = tokenParams.map { "UPPER(\($0))" }.joined(separator: ", ")
+        return """
+            n.Z_PK IN (SELECT COALESCE(t.ZNOTE1, t.ZNOTE) FROM ZICCLOUDSYNCINGOBJECT t
+                WHERE t.Z_ENT = :inlineAttachmentEntityID
+                  AND COALESCE(t.ZTYPEUTI1, t.ZTYPEUTI) = :hashtagUTI
+                  AND (t.ZMARKEDFORDELETION IS NULL OR t.ZMARKEDFORDELETION = 0)
+                  AND \(tagToken("t")) IN (\(list)))
+            """
+    }
+
     /// Core Data stores timestamps as NSDate reference-date (2001-01-01).
     /// Caller converts via `Date(timeIntervalSinceReferenceDate:)`.
     static func coreDataDate(_ raw: Double?) -> Date? {
